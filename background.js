@@ -34,6 +34,7 @@ let state = {
     current: 0,
     total: 0,
     currentTitle: "",
+    currentClipId: "",
     errors: [],
   },
 };
@@ -557,6 +558,7 @@ async function runDownloadQueue(clips, basePath) {
 
       const clip = clips[index];
       state.downloadProgress.currentTitle = clip.title;
+      state.downloadProgress.currentClipId = clip.id;
       broadcast(Actions.DOWNLOAD_PROGRESS, { progress: state.downloadProgress });
 
       try {
@@ -606,6 +608,7 @@ async function startDownload(limit = 0) {
     current: 0,
     total: clips.length,
     currentTitle: "",
+    currentClipId: "",
     errors: [],
   };
   broadcast(Actions.DOWNLOAD_PROGRESS, { progress: state.downloadProgress });
