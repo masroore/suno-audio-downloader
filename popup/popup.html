@@ -23,15 +23,28 @@
       </p>
     </section>
 
-    <section class="panel">
-      <label for="limit-input">Limit (optional, for testing)</label>
-      <input id="limit-input" type="number" min="0" placeholder="0 = all" />
+    <section class="panel discovery-options">
+      <div>
+        <label for="start-input">Start offset</label>
+        <input id="start-input" type="number" min="0" value="0" />
+      </div>
+      <div>
+        <label for="count-input">Count</label>
+        <input id="count-input" type="number" min="0" value="0" />
+        <p class="hint">0 = all remaining</p>
+      </div>
+      <div>
+        <label for="page-size-input">API page size</label>
+        <input id="page-size-input" type="number" min="1" max="100" value="50" />
+        <p class="hint">1–100; falls back when rejected</p>
+      </div>
     </section>
 
     <section class="actions">
       <button id="btn-connect" type="button">Connect</button>
       <button id="btn-discover" type="button" disabled>Discover</button>
       <button id="btn-download" type="button" disabled>Download all</button>
+      <button id="btn-extract-json" type="button" class="secondary" disabled>Extract JSON</button>
       <button id="btn-resume" type="button" class="secondary" disabled hidden>Resume</button>
       <button id="btn-cancel" type="button" class="secondary" disabled>Cancel</button>
     </section>

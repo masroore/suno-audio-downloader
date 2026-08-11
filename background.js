@@ -3,7 +3,12 @@ const API_DELAY_MS = 500;
 const MAX_RETRIES = 3;
 const CONCURRENT_DOWNLOADS = 2;
 const DOWNLOAD_TIMEOUT_MS = 300000;
-const FEED_PAGE_LIMIT = 20;
+const DEFAULT_START = 0;
+const DEFAULT_COUNT = 0;
+const DEFAULT_PAGE_SIZE = 50;
+const MIN_PAGE_SIZE = 1;
+const MAX_PAGE_SIZE = 100;
+const PAGE_SIZE_FALLBACKS = [50, 20, 10];
 // TODO: remove after production / once discover is stable
 const DEBUG = true;
 
@@ -15,8 +20,10 @@ const Actions = {
   EXTRACT_TOKEN: "extractToken",
   GET_STATE: "getState",
   SET_DOWNLOAD_PATH: "setDownloadPath",
+  SET_DISCOVERY_OPTIONS: "setDiscoveryOptions",
   DISCOVER: "discover",
   START_DOWNLOAD: "startDownload",
+  EXTRACT_JSON: "extractJson",
   RESUME_DOWNLOAD: "resumeDownload",
   CANCEL_DOWNLOAD: "cancelDownload",
   DISCOVER_PROGRESS: "discoverProgress",
@@ -30,6 +37,12 @@ let state = {
   downloadPath: "SunoDownloads",
   clips: [],
   completedClipIds: [],
+  discoveryOptions: {
+    start: DEFAULT_START,
+    count: DEFAULT_COUNT,
+    pageSize: DEFAULT_PAGE_SIZE,
+  },
+  lastDiscovery: null,
   discoverProgress: { phase: "idle", page: 0, count: 0 },
   downloadProgress: {
     phase: "idle",
@@ -54,6 +67,7 @@ async function loadState() {
     "deviceId",
     "downloadPath",
     "completedClipIds",
+    "discoveryOptions",
   ]);
   if (stored.token) state.token = stored.token;
   if (stored.userId) state.userId = stored.userId;
@@ -66,6 +80,9 @@ async function loadState() {
   if (stored.downloadPath) state.downloadPath = sanitizeDownloadFolder(stored.downloadPath);
   if (Array.isArray(stored.completedClipIds)) {
     state.completedClipIds = stored.completedClipIds;
+  }
+  if (stored.discoveryOptions) {
+    state.discoveryOptions = normalizeDiscoveryOptions(stored.discoveryOptions);
   }
 }
 
@@ -94,6 +111,29 @@ function sanitizeDownloadFolder(path) {
 async function saveDownloadPath(path) {
   state.downloadPath = sanitizeDownloadFolder(path);
   await chrome.storage.local.set({ downloadPath: state.downloadPath });
+}
+
+function normalizeDiscoveryOptions(options = {}) {
+  const startValue = Number(options.start);
+  const countValue = Number(options.count);
+  const pageSizeValue = Number(options.pageSize);
+  const start = Number.isInteger(startValue) && startValue >= 0
+    ? startValue
+    : DEFAULT_START;
+  const count = Number.isInteger(countValue) && countValue >= 0
+    ? countValue
+    : DEFAULT_COUNT;
+  const pageSize = Number.isInteger(pageSizeValue) &&
+    pageSizeValue >= MIN_PAGE_SIZE &&
+    pageSizeValue <= MAX_PAGE_SIZE
+    ? pageSizeValue
+    : DEFAULT_PAGE_SIZE;
+  return { start, count, pageSize };
+}
+
+async function saveDiscoveryOptions(options) {
+  state.discoveryOptions = normalizeDiscoveryOptions(options);
+  await chrome.storage.local.set({ discoveryOptions: state.discoveryOptions });
 }
 
 function broadcast(action, data) {
@@ -173,7 +213,10 @@ async function apiFetch(endpoint, options = {}, attempt = 0) {
       (data && (data.detail || data.message || data.error)) ||
       responseText.slice(0, 300) ||
       response.statusText;
-    throw new Error(`API error: ${response.status}${detail ? ` — ${detail}` : ""}`);
+    const error = new Error(`API error: ${response.status}${detail ? ` — ${detail}` : ""}`);
+    error.status = response.status;
+    error.detail = detail;
+    throw error;
   }
   return data;
 }
@@ -250,6 +293,13 @@ function getMetadataFilename(clip, basePath) {
   return `${basePath}/${getBaseFilename(clip)}-metadata.json`;
 }
 
+function getAggregateMetadataFilename(discovery, basePath) {
+  const start = discovery?.start ?? DEFAULT_START;
+  const count = discovery?.actual_count ?? 0;
+  const range = count > 0 ? `${start}-${start + count - 1}` : `${start}-empty`;
+  return `${basePath}/Suno metadata [${range}].json`;
+}
+
 function getLyricsFilename(clip, basePath) {
   return `${basePath}/${getBaseFilename(clip)}-lyrics.txt`;
 }
@@ -313,7 +363,40 @@ async function extractTokenFromTab(tabId) {
   return { success: true };
 }
 
-async function discoverClips(limit = 0) {
+function isPageSizeValidationError(error) {
+  return (error?.status === 400 || error?.status === 422) &&
+    /(?:page\s*size|page_size|\blimit\b)/i.test(error.detail || error.message || "");
+}
+
+function getPageSizeCandidates(requestedPageSize) {
+  return [...new Set([requestedPageSize, ...PAGE_SIZE_FALLBACKS])];
+}
+
+async function fetchFeedPage(cursor, pageSize, filters) {
+  return apiFetch("/feed/v3", {
+    method: "POST",
+    body: { cursor, limit: pageSize, filters },
+  });
+}
+
+async function fetchFeedPageWithFallback(cursor, activePageSize, requestedPageSize, filters) {
+  let lastError = null;
+  const ladder = getPageSizeCandidates(requestedPageSize);
+  const activeIndex = ladder.indexOf(activePageSize);
+  const candidates = ladder.slice(activeIndex >= 0 ? activeIndex : 0);
+  for (const pageSize of candidates) {
+    try {
+      return { data: await fetchFeedPage(cursor, pageSize, filters), pageSize };
+    } catch (error) {
+      lastError = error;
+      if (!isPageSizeValidationError(error)) throw error;
+    }
+  }
+  throw lastError;
+}
+
+async function discoverClips(options = {}) {
+  const { start, count, pageSize: requestedPageSize } = normalizeDiscoveryOptions(options);
   if (isDiscovering) {
     return { success: false, error: "Discovery already in progress" };
   }
@@ -327,51 +410,82 @@ async function discoverClips(limit = 0) {
   isDiscovering = true;
   cancelRequested = false;
   const clips = [];
+  const seenIds = new Set();
   let page = 0;
   let hasMore = true;
   let cursor = null;
+  let activePageSize = requestedPageSize;
+  let skipped = 0;
   const filters = buildFeedFilters(state.userId);
 
   debugLog("discover start", {
-    limit,
+    start,
+    count,
+    requestedPageSize,
     userId: state.userId,
     filters,
-    feedPageLimit: FEED_PAGE_LIMIT,
   });
 
-  state.discoverProgress = { phase: "discovering", page: 0, count: 0 };
+  state.discoverProgress = {
+    phase: "discovering",
+    page: 0,
+    count: 0,
+    start,
+    requestedCount: count,
+    requestedPageSize,
+    pageSize: activePageSize,
+  };
   broadcast(Actions.DISCOVER_PROGRESS, { progress: state.discoverProgress });
 
   try {
     while (hasMore && !cancelRequested) {
-      const requestBody = {
+      debugLog("discover page request", {
+        page,
         cursor,
-        limit: FEED_PAGE_LIMIT,
+        limit: activePageSize,
         filters,
-      };
-      debugLog("discover page request", { page, requestBody });
-      const data = await apiFetch("/feed/v3", {
-        method: "POST",
-        body: requestBody,
       });
+      const pageResult = await fetchFeedPageWithFallback(
+        cursor,
+        activePageSize,
+        requestedPageSize,
+        filters,
+      );
+      if (pageResult.pageSize !== activePageSize) {
+        debugLog("discover page size fallback", {
+          requestedPageSize,
+          from: activePageSize,
+          to: pageResult.pageSize,
+        });
+      }
+      activePageSize = pageResult.pageSize;
+      const data = pageResult.data;
       const pageClips = data?.clips || [];
       debugLog("discover page result", {
         page,
         clipCount: pageClips.length,
+        pageSize: activePageSize,
         has_more: data?.has_more,
         next_cursor: data?.next_cursor ?? null,
         sampleKeys: pageClips[0] ? Object.keys(pageClips[0]) : [],
         rawKeys: data && typeof data === "object" ? Object.keys(data) : [],
       });
       for (const clip of pageClips) {
-        if (limit > 0 && clips.length >= limit) {
-          hasMore = false;
-          break;
+        const seenKey = clip?.id || `page-${page}-clip-${skipped + clips.length}`;
+        if (seenIds.has(seenKey)) continue;
+        seenIds.add(seenKey);
+        if (skipped < start) {
+          skipped++;
+          continue;
         }
+        if (count > 0 && clips.length >= count) break;
         const normalized = normalizeClip(clip);
-        if (normalized.audio_url) clips.push(normalized);
+        clips.push(normalized);
       }
-      hasMore = hasMore && data.has_more && pageClips.length > 0;
+      hasMore = hasMore &&
+        data.has_more &&
+        pageClips.length > 0 &&
+        !(count > 0 && clips.length >= count);
       cursor = data.next_cursor || null;
       if (!cursor) hasMore = false;
       page++;
@@ -379,17 +493,36 @@ async function discoverClips(limit = 0) {
         phase: "discovering",
         page,
         count: clips.length,
+        skipped,
+        start,
+        requestedCount: count,
+        requestedPageSize,
+        pageSize: activePageSize,
         totalEstimate: null,
       };
       broadcast(Actions.DISCOVER_PROGRESS, { progress: state.discoverProgress });
-      if (limit > 0 && clips.length >= limit) break;
     }
 
     state.clips = clips;
+    state.lastDiscovery = {
+      source: "suno",
+      fetched_at: new Date().toISOString(),
+      start,
+      requested_count: count,
+      actual_count: clips.length,
+      requested_page_size: requestedPageSize,
+      page_size: activePageSize,
+      clips: clips.map(({ clipData }) => clipData),
+    };
     state.discoverProgress = {
       phase: cancelRequested ? "cancelled" : "complete",
       page,
       count: clips.length,
+      skipped,
+      start,
+      requestedCount: count,
+      requestedPageSize,
+      pageSize: activePageSize,
     };
     broadcast(Actions.DISCOVER_PROGRESS, { progress: state.discoverProgress });
     debugLog("discover done", {
@@ -410,7 +543,16 @@ async function discoverClips(limit = 0) {
     });
     // Also log to console to ensure visibility
     console.error("[suno-dl] DISCOVER ERROR:", err);
-    state.discoverProgress = { phase: "error", page, count: clips.length, error: err.message };
+    state.discoverProgress = {
+      phase: "error",
+      page,
+      count: clips.length,
+      start,
+      requestedCount: count,
+      requestedPageSize,
+      pageSize: activePageSize,
+      error: err.message,
+    };
     broadcast(Actions.DISCOVER_PROGRESS, { progress: state.discoverProgress });
     return { success: false, error: err.message };
   } finally {
@@ -503,6 +645,20 @@ async function downloadJsonMetadata(clip, basePath) {
   const json = JSON.stringify(payload, null, 2);
   const dataUrl = "data:application/json;charset=utf-8," + encodeURIComponent(json);
   return downloadFromUrl(dataUrl, getMetadataFilename(clip, basePath));
+}
+
+async function extractAggregateJson(basePath) {
+  if (!state.lastDiscovery) {
+    throw new Error("No discovery results — run Discover first");
+  }
+  const discovery = {
+    ...state.lastDiscovery,
+    clips: state.clips.map(({ clipData }) => clipData),
+    actual_count: state.clips.length,
+  };
+  const json = JSON.stringify(discovery, null, 2);
+  const dataUrl = "data:application/json;charset=utf-8," + encodeURIComponent(json);
+  return downloadFromUrl(dataUrl, getAggregateMetadataFilename(discovery, basePath));
 }
 
 async function downloadLyrics(clip, basePath) {
@@ -711,11 +867,25 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           isDiscovering,
           isDownloading,
           completedClipIds: state.completedClipIds,
+          discoveryOptions: state.discoveryOptions,
+          lastDiscovery: state.lastDiscovery
+            ? {
+                start: state.lastDiscovery.start,
+                requested_count: state.lastDiscovery.requested_count,
+                actual_count: state.lastDiscovery.actual_count,
+                requested_page_size: state.lastDiscovery.requested_page_size,
+                page_size: state.lastDiscovery.page_size,
+              }
+            : null,
         });
         break;
       case Actions.SET_DOWNLOAD_PATH:
         await saveDownloadPath(message.path);
         sendResponse({ success: true, downloadPath: state.downloadPath });
+        break;
+      case Actions.SET_DISCOVERY_OPTIONS:
+        await saveDiscoveryOptions(message.options || {});
+        sendResponse({ success: true, discoveryOptions: state.discoveryOptions });
         break;
       case Actions.DISCOVER:
         if (isDiscovering) {
@@ -723,10 +893,19 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           break;
         }
         // Fire and forget — popup polls via GET_STATE / DISCOVER_PROGRESS broadcasts
-        discoverClips(message.limit || 0).catch((err) => {
+        discoverClips(message.options || state.discoveryOptions).catch((err) => {
           console.error("[suno-dl] background discover error", err);
         });
         sendResponse({ success: true, started: true });
+        break;
+      case Actions.EXTRACT_JSON:
+        try {
+          const basePath = sanitizeDownloadFolder(state.downloadPath);
+          await extractAggregateJson(basePath);
+          sendResponse({ success: true, count: state.clips.length });
+        } catch (err) {
+          sendResponse({ success: false, error: err.message });
+        }
         break;
       case Actions.START_DOWNLOAD:
         sendResponse(

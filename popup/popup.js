@@ -2,8 +2,10 @@ const Actions = {
   EXTRACT_TOKEN: "extractToken",
   GET_STATE: "getState",
   SET_DOWNLOAD_PATH: "setDownloadPath",
+  SET_DISCOVERY_OPTIONS: "setDiscoveryOptions",
   DISCOVER: "discover",
   START_DOWNLOAD: "startDownload",
+  EXTRACT_JSON: "extractJson",
   RESUME_DOWNLOAD: "resumeDownload",
   CANCEL_DOWNLOAD: "cancelDownload",
   DISCOVER_PROGRESS: "discoverProgress",
@@ -13,10 +15,13 @@ const Actions = {
 const el = {
   status: document.getElementById("status"),
   downloadPath: document.getElementById("download-path"),
-  limitInput: document.getElementById("limit-input"),
+  startInput: document.getElementById("start-input"),
+  countInput: document.getElementById("count-input"),
+  pageSizeInput: document.getElementById("page-size-input"),
   btnConnect: document.getElementById("btn-connect"),
   btnDiscover: document.getElementById("btn-discover"),
   btnDownload: document.getElementById("btn-download"),
+  btnExtractJson: document.getElementById("btn-extract-json"),
   btnResume: document.getElementById("btn-resume"),
   btnCancel: document.getElementById("btn-cancel"),
   progressPanel: document.getElementById("progress-panel"),
@@ -39,9 +44,23 @@ function setStatus(text, kind = "idle") {
   el.status.className = `status status-${kind}`;
 }
 
-function getLimit() {
-  const value = parseInt(el.limitInput.value, 10);
-  return Number.isFinite(value) && value > 0 ? value : 0;
+function getDiscoveryOptions() {
+  const start = parseInt(el.startInput.value, 10);
+  const count = parseInt(el.countInput.value, 10);
+  const pageSize = parseInt(el.pageSizeInput.value, 10);
+  return {
+    start: Number.isFinite(start) && start >= 0 ? start : 0,
+    count: Number.isFinite(count) && count >= 0 ? count : 0,
+    pageSize: Number.isFinite(pageSize) && pageSize >= 1 && pageSize <= 100 ? pageSize : 50,
+  };
+}
+
+async function persistDiscoveryOptions() {
+  const res = await send(Actions.SET_DISCOVERY_OPTIONS, { options: getDiscoveryOptions() });
+  if (!res?.discoveryOptions) return;
+  el.startInput.value = res.discoveryOptions.start;
+  el.countInput.value = res.discoveryOptions.count;
+  el.pageSizeInput.value = res.discoveryOptions.pageSize;
 }
 
 function formatDuration(seconds) {
@@ -96,6 +115,7 @@ function updateDownloadButton() {
       ? "Download all"
       : `Download selected (${selectedIds.size})`;
   el.btnDownload.disabled = busy || clipCount === 0 || selectedIds.size === 0;
+  el.btnExtractJson.disabled = busy || !lastDiscovery;
 }
 
 function setClipStatus(clipId, status) {
@@ -215,6 +235,7 @@ let clipCount = 0;
 let busy = false;
 let selectedIds = new Set();
 let currentClips = [];
+let lastDiscovery = null;
 
 async function refreshState() {
   const res = await send(Actions.GET_STATE);
@@ -222,6 +243,11 @@ async function refreshState() {
   connected = res.connected;
   clipCount = res.clipCount;
   el.downloadPath.value = (res.downloadPath || "SunoDownloads").replace(/[\\/]+/g, "");
+  const options = res.discoveryOptions || { start: 0, count: 0, pageSize: 50 };
+  el.startInput.value = options.start;
+  el.countInput.value = options.count;
+  el.pageSizeInput.value = options.pageSize;
+  lastDiscovery = res.lastDiscovery;
   if (Array.isArray(res.clips)) {
     renderClips(res.clips, res.downloadProgress?.statuses);
   }
@@ -290,6 +316,11 @@ async function persistDownloadPath() {
 el.downloadPath.addEventListener("change", persistDownloadPath);
 el.downloadPath.addEventListener("blur", persistDownloadPath);
 
+for (const input of [el.startInput, el.countInput, el.pageSizeInput]) {
+  input.addEventListener("change", persistDiscoveryOptions);
+  input.addEventListener("blur", persistDiscoveryOptions);
+}
+
 el.clipList.addEventListener("change", (event) => {
   if (!event.target.classList.contains("clip-chk")) return;
   const id = event.target.dataset.id;
@@ -318,7 +349,9 @@ el.btnDiscover.addEventListener("click", async () => {
   setBusy(true);
   el.progressPanel.hidden = false;
   el.progressText.textContent = "Starting discovery…";
-  const res = await send(Actions.DISCOVER, { limit: getLimit() });
+  const options = getDiscoveryOptions();
+  await send(Actions.SET_DISCOVERY_OPTIONS, { options });
+  const res = await send(Actions.DISCOVER, { options });
   if (!res.success) {
     setBusy(false);
     setStatus(res.error || "Discover failed", "error");
@@ -328,13 +361,23 @@ el.btnDiscover.addEventListener("click", async () => {
   setStatus("Discovering…", "busy");
 });
 
+el.btnExtractJson.addEventListener("click", async () => {
+  setBusy(true);
+  const res = await send(Actions.EXTRACT_JSON);
+  setBusy(false);
+  if (!res.success) {
+    setStatus(res.error || "JSON extraction failed", "error");
+    return;
+  }
+  setStatus(`Extracted JSON · ${res.count} clip(s)`, "ok");
+});
+
 el.btnDownload.addEventListener("click", async () => {
   setBusy(true);
   el.btnCancel.disabled = false;
   const idsToDownload =
     selectedIds.size === clipCount ? null : [...selectedIds];
   const res = await send(Actions.START_DOWNLOAD, {
-    limit: getLimit(),
     selectedIds: idsToDownload,
   });
   setBusy(false);
@@ -362,7 +405,7 @@ el.btnCancel.addEventListener("click", async () => {
 el.btnResume.addEventListener("click", async () => {
   setBusy(true);
   el.btnCancel.disabled = false;
-  const res = await send(Actions.RESUME_DOWNLOAD, { limit: getLimit() });
+  const res = await send(Actions.RESUME_DOWNLOAD, { limit: 0 });
   setBusy(false);
   el.btnCancel.disabled = true;
   el.btnResume.hidden = true;
