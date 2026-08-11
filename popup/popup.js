@@ -129,6 +129,7 @@ function updateProgress(progress, type) {
   }
 
   if (type === "download") {
+    renderProgressStatuses(progress);
     if (progress.phase === "downloading") {
       setStatus("Downloading…", "busy");
       const pct = progress.total
