@@ -40,7 +40,7 @@ async function loadState() {
   const stored = await chrome.storage.local.get(["token", "userId", "downloadPath"]);
   if (stored.token) state.token = stored.token;
   if (stored.userId) state.userId = stored.userId;
-  if (stored.downloadPath) state.downloadPath = stored.downloadPath;
+  if (stored.downloadPath) state.downloadPath = sanitizeDownloadFolder(stored.downloadPath);
 }
 
 async function saveAuth(token, userId) {
@@ -55,8 +55,18 @@ async function clearAuth() {
   await chrome.storage.local.remove(["token", "userId"]);
 }
 
+function sanitizeDownloadFolder(path) {
+  const flat = String(path || "")
+    .replace(/[\\/]+/g, "")
+    .replace(/[<>:"|?*\x00-\x1F]/g, "_")
+    .replace(/^\.+/, "")
+    .trim()
+    .slice(0, 80);
+  return flat || "SunoDownloads";
+}
+
 async function saveDownloadPath(path) {
-  state.downloadPath = path || "SunoDownloads";
+  state.downloadPath = sanitizeDownloadFolder(path);
   await chrome.storage.local.set({ downloadPath: state.downloadPath });
 }
 
@@ -454,7 +464,7 @@ async function startDownload(limit = 0) {
 
   isDownloading = true;
   cancelRequested = false;
-  const basePath = state.downloadPath || "SunoDownloads";
+  const basePath = sanitizeDownloadFolder(state.downloadPath);
   const clips = limit > 0 ? state.clips.slice(0, limit) : state.clips;
 
   state.downloadProgress = {

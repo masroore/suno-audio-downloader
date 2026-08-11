@@ -38,7 +38,7 @@ A Chrome / Firefox (Manifest V3) extension that discovers the audio in your Suno
 
 1. Open [suno.com](https://suno.com) and sign in.
 2. Click the extension icon and click **Connect** (the active tab must be on suno.com).
-3. Optionally change the **Downloads subfolder** (default: `SunoDownloads`).
+3. Optionally change the **Downloads folder** name (default: `SunoDownloads` — a single flat folder, no nesting).
 4. Optionally set a **Limit** (e.g. `5`) to test with a small batch.
 5. Click **Discover** to fetch your library clips.
 6. Click **Download all** to save audio, cover images, and metadata.

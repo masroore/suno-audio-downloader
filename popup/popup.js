@@ -145,7 +145,7 @@ async function refreshState() {
   if (!res?.success) return;
   connected = res.connected;
   clipCount = res.clipCount;
-  el.downloadPath.value = res.downloadPath || "SunoDownloads";
+  el.downloadPath.value = (res.downloadPath || "SunoDownloads").replace(/[\\/]+/g, "");
   if (res.clips?.length) renderClips(res.clips);
   if (res.isDiscovering || res.isDownloading) {
     setBusy(true);
@@ -192,15 +192,14 @@ el.btnConnect.addEventListener("click", async () => {
   }
 });
 
-el.downloadPath.addEventListener("change", async () => {
+async function persistDownloadPath() {
   const path = el.downloadPath.value.trim() || "SunoDownloads";
-  await send(Actions.SET_DOWNLOAD_PATH, { path });
-});
+  const res = await send(Actions.SET_DOWNLOAD_PATH, { path });
+  if (res?.downloadPath) el.downloadPath.value = res.downloadPath;
+}
 
-el.downloadPath.addEventListener("blur", async () => {
-  const path = el.downloadPath.value.trim() || "SunoDownloads";
-  await send(Actions.SET_DOWNLOAD_PATH, { path });
-});
+el.downloadPath.addEventListener("change", persistDownloadPath);
+el.downloadPath.addEventListener("blur", persistDownloadPath);
 
 el.btnDiscover.addEventListener("click", async () => {
   setBusy(true);
