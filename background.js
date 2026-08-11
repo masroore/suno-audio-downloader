@@ -99,7 +99,7 @@ async function apiRateLimit() {
   lastApiRequest = Date.now();
 }
 
-async function apiFetch(endpoint, options = {}) {
+async function apiFetch(endpoint, options = {}, attempt = 0) {
   await apiRateLimit();
   const url = endpoint.startsWith("http") ? endpoint : `${API_BASE}${endpoint}`;
   const method = options.method || "GET";
@@ -148,8 +148,13 @@ async function apiFetch(endpoint, options = {}) {
       throw new Error("Token expired — reconnect on suno.com.");
     }
     if (response.status === 429) {
-      await sleep(5000);
-      return apiFetch(endpoint, options);
+      if (attempt >= MAX_RETRIES) {
+        throw new Error(`API rate limited after ${MAX_RETRIES} retries — try again later.`);
+      }
+      const backoff = 5000 * Math.pow(2, attempt);
+      debugLog(`429 rate limit, retrying in ${backoff}ms (attempt ${attempt + 1})`);
+      await sleep(backoff);
+      return apiFetch(endpoint, options, attempt + 1);
     }
     const detail =
       (data && (data.detail || data.message || data.error)) ||
