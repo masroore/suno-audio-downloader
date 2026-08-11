@@ -4,6 +4,7 @@ const Actions = {
   SET_DOWNLOAD_PATH: "setDownloadPath",
   DISCOVER: "discover",
   START_DOWNLOAD: "startDownload",
+  RESUME_DOWNLOAD: "resumeDownload",
   CANCEL_DOWNLOAD: "cancelDownload",
   DISCOVER_PROGRESS: "discoverProgress",
   DOWNLOAD_PROGRESS: "downloadProgress",
@@ -16,6 +17,7 @@ const el = {
   btnConnect: document.getElementById("btn-connect"),
   btnDiscover: document.getElementById("btn-discover"),
   btnDownload: document.getElementById("btn-download"),
+  btnResume: document.getElementById("btn-resume"),
   btnCancel: document.getElementById("btn-cancel"),
   progressPanel: document.getElementById("progress-panel"),
   progressText: document.getElementById("progress-text"),
@@ -175,6 +177,9 @@ function setBusy(busy) {
   el.btnConnect.disabled = busy;
   el.btnDiscover.disabled = busy || !connected;
   el.btnDownload.disabled = busy || clipCount === 0;
+  if (!el.btnResume.hidden) {
+    el.btnResume.disabled = busy;
+  }
 }
 
 let connected = false;
@@ -189,12 +194,23 @@ async function refreshState() {
   if (Array.isArray(res.clips)) {
     renderClips(res.clips, res.downloadProgress?.statuses);
   }
-  if (res.isDiscovering || res.isDownloading) {
+  const busy = res.isDiscovering || res.isDownloading;
+  if (busy) {
     setBusy(true);
     el.btnCancel.disabled = false;
   } else {
     setBusy(false);
     el.btnCancel.disabled = true;
+  }
+  const hasResumable =
+    res.completedClipIds?.length > 0 &&
+    res.clipCount > 0 &&
+    res.completedClipIds.length < res.clipCount;
+  el.btnResume.hidden = !hasResumable;
+  el.btnResume.disabled = hasResumable ? busy : true;
+  if (hasResumable) {
+    const remaining = res.clipCount - res.completedClipIds.length;
+    el.btnResume.textContent = `Resume (${remaining} left)`;
   }
   if (connected && !res.isDiscovering && !res.isDownloading) {
     setStatus(clipCount ? `Connected · ${clipCount} clips` : "Connected", "ok");
@@ -281,6 +297,28 @@ el.btnDownload.addEventListener("click", async () => {
 el.btnCancel.addEventListener("click", async () => {
   await send(Actions.CANCEL_DOWNLOAD);
   el.btnCancel.disabled = true;
+});
+
+el.btnResume.addEventListener("click", async () => {
+  setBusy(true);
+  el.btnCancel.disabled = false;
+  const res = await send(Actions.RESUME_DOWNLOAD, { limit: getLimit() });
+  setBusy(false);
+  el.btnCancel.disabled = true;
+  el.btnResume.hidden = true;
+  if (!res.success) {
+    setStatus(res.error || "Resume failed", "error");
+    return;
+  }
+  const failed = res.failed || 0;
+  setStatus(
+    res.cancelled
+      ? "Download cancelled"
+      : failed
+        ? `Done · ${res.completed} ok, ${failed} failed`
+        : `Downloaded ${res.completed} file(s)`,
+    failed ? "error" : "ok",
+  );
 });
 
 chrome.runtime.onMessage.addListener((message) => {
