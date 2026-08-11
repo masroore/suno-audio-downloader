@@ -237,6 +237,10 @@ function getMetadataFilename(clip, basePath) {
   return `${basePath}/${getBaseFilename(clip)}-metadata.json`;
 }
 
+function getLyricsFilename(clip, basePath) {
+  return `${basePath}/${getBaseFilename(clip)}-lyrics.txt`;
+}
+
 function normalizeClip(clip) {
   const audioUrl = getAudioUrl(clip);
   return {
@@ -488,6 +492,14 @@ async function downloadJsonMetadata(clip, basePath) {
   return downloadFromUrl(dataUrl, getMetadataFilename(clip, basePath));
 }
 
+async function downloadLyrics(clip, basePath) {
+  const raw = clip.clipData || clip;
+  const lyrics = raw.metadata?.prompt;
+  if (!lyrics || !lyrics.trim()) return null;
+  const dataUrl = "data:text/plain;charset=utf-8," + encodeURIComponent(lyrics);
+  return downloadFromUrl(dataUrl, getLyricsFilename(clip, basePath));
+}
+
 async function downloadWithRetry(fn, attempt = 0) {
   try {
     return await fn();
@@ -522,6 +534,12 @@ async function downloadClipAssets(clip, basePath) {
     await downloadWithRetry(() => downloadJsonMetadata(clip, basePath));
   } catch (err) {
     assetErrors.push(`metadata: ${err.message}`);
+  }
+
+  try {
+    await downloadLyrics(clip, basePath);
+  } catch (err) {
+    assetErrors.push(`lyrics: ${err.message}`);
   }
 
   return { assetErrors };
