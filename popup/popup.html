@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Suno Audio Downloader</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Suno Audio Downloader</h1>
+      <p id="status" class="status status-idle">Not connected</p>
+    </header>
+
+    <section class="panel">
+      <label for="download-path">Downloads subfolder</label>
+      <div class="row">
+        <span class="prefix">Downloads/</span>
+        <input id="download-path" type="text" value="SunoDownloads" spellcheck="false" />
+      </div>
+      <p class="hint">
+        Files save under your browser Downloads folder. Disable “Ask where to save each file” for bulk downloads.
+      </p>
+    </section>
+
+    <section class="panel">
+      <label for="limit-input">Limit (optional, for testing)</label>
+      <input id="limit-input" type="number" min="0" placeholder="0 = all" />
+    </section>
+
+    <section class="actions">
+      <button id="btn-connect" type="button">Connect</button>
+      <button id="btn-discover" type="button" disabled>Discover</button>
+      <button id="btn-download" type="button" disabled>Download all</button>
+      <button id="btn-cancel" type="button" class="secondary" disabled>Cancel</button>
+    </section>
+
+    <section class="panel progress-panel" id="progress-panel" hidden>
+      <p id="progress-text">Idle</p>
+      <div class="bar"><div id="progress-bar" class="bar-fill"></div></div>
+      <p id="progress-detail" class="hint"></p>
+    </section>
+
+    <section class="panel">
+      <div class="list-header">
+        <h2>Discovered clips</h2>
+        <span id="clip-count">0</span>
+      </div>
+      <ul id="clip-list"></ul>
+    </section>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
