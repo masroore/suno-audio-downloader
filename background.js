@@ -4,6 +4,12 @@ const MAX_RETRIES = 3;
 const CONCURRENT_DOWNLOADS = 2;
 const DOWNLOAD_TIMEOUT_MS = 300000;
 const FEED_PAGE_LIMIT = 20;
+// TODO: remove after production / once discover is stable
+const DEBUG = true;
+
+function debugLog(...args) {
+  if (DEBUG) console.log("[suno-dl]", ...args);
+}
 
 const Actions = {
   EXTRACT_TOKEN: "extractToken",
@@ -103,7 +109,27 @@ async function apiFetch(endpoint, options = {}) {
   if (options.body !== undefined) {
     fetchOptions.body = JSON.stringify(options.body);
   }
+  debugLog("apiFetch request", {
+    url,
+    method,
+    body: options.body,
+    tokenPreview: state.token ? `${state.token.slice(0, 12)}…` : null,
+  });
   const response = await fetch(url, fetchOptions);
+  const responseText = await response.text();
+  let data = null;
+  try {
+    data = responseText ? JSON.parse(responseText) : null;
+  } catch {
+    data = null;
+  }
+  debugLog("apiFetch response", {
+    url,
+    status: response.status,
+    ok: response.ok,
+    bodyPreview: responseText.slice(0, 2000),
+    parsedKeys: data && typeof data === "object" ? Object.keys(data) : null,
+  });
   if (!response.ok) {
     if (response.status === 401) {
       await clearAuth();
@@ -113,9 +139,13 @@ async function apiFetch(endpoint, options = {}) {
       await sleep(5000);
       return apiFetch(endpoint, options);
     }
-    throw new Error(`API error: ${response.status}`);
+    const detail =
+      (data && (data.detail || data.message || data.error)) ||
+      responseText.slice(0, 300) ||
+      response.statusText;
+    throw new Error(`API error: ${response.status}${detail ? ` — ${detail}` : ""}`);
   }
-  return response.json();
+  return data;
 }
 
 function buildFeedFilters(userId) {
@@ -260,20 +290,37 @@ async function discoverClips(limit = 0) {
   let cursor = null;
   const filters = buildFeedFilters(state.userId);
 
+  debugLog("discover start", {
+    limit,
+    userId: state.userId,
+    filters,
+    feedPageLimit: FEED_PAGE_LIMIT,
+  });
+
   state.discoverProgress = { phase: "discovering", page: 0, count: 0 };
   broadcast(Actions.DISCOVER_PROGRESS, { progress: state.discoverProgress });
 
   try {
     while (hasMore && !cancelRequested) {
+      const requestBody = {
+        cursor,
+        limit: FEED_PAGE_LIMIT,
+        filters,
+      };
+      debugLog("discover page request", { page, requestBody });
       const data = await apiFetch("/feed/v3", {
         method: "POST",
-        body: {
-          cursor,
-          limit: FEED_PAGE_LIMIT,
-          filters,
-        },
+        body: requestBody,
       });
-      const pageClips = data.clips || [];
+      const pageClips = data?.clips || [];
+      debugLog("discover page result", {
+        page,
+        clipCount: pageClips.length,
+        has_more: data?.has_more,
+        next_cursor: data?.next_cursor ?? null,
+        sampleKeys: pageClips[0] ? Object.keys(pageClips[0]) : [],
+        rawKeys: data && typeof data === "object" ? Object.keys(data) : [],
+      });
       for (const clip of pageClips) {
         if (limit > 0 && clips.length >= limit) {
           hasMore = false;
@@ -303,8 +350,22 @@ async function discoverClips(limit = 0) {
       count: clips.length,
     };
     broadcast(Actions.DISCOVER_PROGRESS, { progress: state.discoverProgress });
+    debugLog("discover done", {
+      phase: state.discoverProgress.phase,
+      pages: page,
+      count: clips.length,
+    });
     return { success: true, count: clips.length, clips: clipsForPopup(clips) };
   } catch (err) {
+    console.error("[suno-dl] discover failed", {
+      page,
+      count: clips.length,
+      userId: state.userId,
+      cursor,
+      filters,
+      error: err?.message || String(err),
+      stack: err?.stack,
+    });
     state.discoverProgress = { phase: "error", page, count: clips.length, error: err.message };
     broadcast(Actions.DISCOVER_PROGRESS, { progress: state.discoverProgress });
     return { success: false, error: err.message };
