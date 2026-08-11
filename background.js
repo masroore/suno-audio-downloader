@@ -17,6 +17,7 @@ const Actions = {
   SET_DOWNLOAD_PATH: "setDownloadPath",
   DISCOVER: "discover",
   START_DOWNLOAD: "startDownload",
+  RESUME_DOWNLOAD: "resumeDownload",
   CANCEL_DOWNLOAD: "cancelDownload",
   DISCOVER_PROGRESS: "discoverProgress",
   DOWNLOAD_PROGRESS: "downloadProgress",
@@ -28,6 +29,7 @@ let state = {
   deviceId: null,
   downloadPath: "SunoDownloads",
   clips: [],
+  completedClipIds: [],
   discoverProgress: { phase: "idle", page: 0, count: 0 },
   downloadProgress: {
     phase: "idle",
@@ -46,7 +48,13 @@ let cancelRequested = false;
 let lastApiRequest = 0;
 
 async function loadState() {
-  const stored = await chrome.storage.local.get(["token", "userId", "deviceId", "downloadPath"]);
+  const stored = await chrome.storage.local.get([
+    "token",
+    "userId",
+    "deviceId",
+    "downloadPath",
+    "completedClipIds",
+  ]);
   if (stored.token) state.token = stored.token;
   if (stored.userId) state.userId = stored.userId;
   if (stored.deviceId) state.deviceId = stored.deviceId;
@@ -56,6 +64,9 @@ async function loadState() {
     await chrome.storage.local.set({ deviceId: state.deviceId });
   }
   if (stored.downloadPath) state.downloadPath = sanitizeDownloadFolder(stored.downloadPath);
+  if (Array.isArray(stored.completedClipIds)) {
+    state.completedClipIds = stored.completedClipIds;
+  }
 }
 
 async function saveAuth(token, userId) {
@@ -586,6 +597,13 @@ async function runDownloadQueue(clips, basePath) {
       }
 
       completed++;
+      if (
+        !errors.some((error) => error.id === clip.id) &&
+        !state.completedClipIds.includes(clip.id)
+      ) {
+        state.completedClipIds.push(clip.id);
+        await chrome.storage.local.set({ completedClipIds: state.completedClipIds });
+      }
       state.downloadProgress.current = completed;
       broadcast(Actions.DOWNLOAD_PROGRESS, { progress: state.downloadProgress });
       await sleep(200);
@@ -627,6 +645,11 @@ async function startDownload(limit = 0) {
 
   try {
     const { completed, errors } = await runDownloadQueue(clips, basePath);
+    if (!cancelRequested && errors.length === 0) {
+      // Clean run — reset resume state
+      state.completedClipIds = [];
+      await chrome.storage.local.remove("completedClipIds");
+    }
     state.downloadProgress.phase = cancelRequested ? "cancelled" : "complete";
     state.downloadProgress.current = completed;
     state.downloadProgress.errors = errors;
@@ -683,6 +706,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           downloadProgress: state.downloadProgress,
           isDiscovering,
           isDownloading,
+          completedClipIds: state.completedClipIds,
         });
         break;
       case Actions.SET_DOWNLOAD_PATH:
@@ -703,6 +727,23 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       case Actions.START_DOWNLOAD:
         sendResponse(await startDownload(message.limit || 0));
         break;
+      case Actions.RESUME_DOWNLOAD: {
+        // Re-run startDownload but exclude already-completed clips
+        const remaining = state.clips.filter(
+          (clip) => !state.completedClipIds.includes(clip.id),
+        );
+        if (remaining.length === 0) {
+          sendResponse({ success: true, completed: 0, failed: 0, errors: [], cancelled: false });
+          break;
+        }
+        // Temporarily override clips for this run
+        const originalClips = state.clips;
+        state.clips = remaining;
+        const result = await startDownload(message.limit || 0);
+        state.clips = originalClips;
+        sendResponse(result);
+        break;
+      }
       case Actions.CANCEL_DOWNLOAD:
         sendResponse(cancelDownload());
         break;
