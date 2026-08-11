@@ -1,14 +1,14 @@
 # Suno Audio Downloader
 
-A Chrome / Firefox (Manifest V3) extension that discovers the MP3/M4A audio in your Suno library and bulk-downloads it into a subfolder of your browser Downloads directory.
+A Chrome / Firefox (Manifest V3) extension that discovers the audio in your Suno library and bulk-downloads each clip’s MP3/M4A, cover image, and metadata JSON into a subfolder of your browser Downloads directory.
 
 > For personal use. Not affiliated with Suno.
 
 ## Features
 
-- **Connect** — pulls your Suno session token from the active `suno.com` tab (via Clerk) and stores it locally.
-- **Discover** — walks your Suno feed (`/feed/v2`) and lists every clip with a playable audio URL.
-- **Bulk download** — downloads clips into `Downloads/<subfolder>/<Song Title> [<id>].mp3` with a retry/backoff queue (2 concurrent downloads, up to 3 retries per file).
+- **Connect** — pulls your Suno session token and user id from the active `suno.com` tab (via Clerk) and stores them locally.
+- **Discover** — walks your Suno feed (`POST /feed/v3`) and lists every clip with a playable audio URL.
+- **Bulk download** — for each clip, saves audio, large cover image, and a metadata sidecar into `Downloads/<subfolder>/` with a retry/backoff queue (2 concurrent clips, up to 3 retries per file).
 - **Progress + cancel** — live progress bar for both discovery and downloads, cancellable at any time.
 - **Limit option** — cap discovery/downloads to N clips for testing (0 = everything).
 
@@ -41,20 +41,24 @@ A Chrome / Firefox (Manifest V3) extension that discovers the MP3/M4A audio in y
 3. Optionally change the **Downloads subfolder** (default: `SunoDownloads`).
 4. Optionally set a **Limit** (e.g. `5`) to test with a small batch.
 5. Click **Discover** to fetch your library clips.
-6. Click **Download all** to save the audio files.
+6. Click **Download all** to save audio, cover images, and metadata.
 
 Files are saved as:
 
 ```
 Downloads/<subfolder>/<Song Title> [<id>].mp3
+Downloads/<subfolder>/<Song Title> [<id>].jpeg
+Downloads/<subfolder>/<Song Title> [<id>]-metadata.json
 ```
+
+(Image extension follows `image_large_url`, usually `.jpeg`.)
 
 ## How it works
 
-- **Auth** — the extension injects a script into your suno.com tab and calls `window.Clerk.session.getToken()`, then uses that bearer token for API requests. The token is kept in `chrome.storage.local` and cleared automatically when it expires (HTTP 401).
-- **Discovery** — pages through `https://studio-api.prod.suno.com/api/feed/v2` (500 ms rate limit between requests). Stems are excluded (`hide_gen_stems=true`); studio clips are included.
-- **Downloads** — each clip is downloaded via the `chrome.downloads` API straight to the chosen subfolder (no save-as prompt), with 2 concurrent workers, exponential-backoff retries, a 5-minute per-file timeout, and `uniquify` conflict handling.
-- **Format** — the file extension (`.mp3` / `.m4a`) is inferred from the clip's `audio_url`, with a `cdn1.suno.ai/<id>.mp3` fallback.
+- **Auth** — the extension injects a script into your suno.com tab and reads `window.Clerk.session.getToken()` plus `window.Clerk.user.id`, then uses the bearer token for API requests. Token and user id are kept in `chrome.storage.local` and cleared automatically when the token expires (HTTP 401).
+- **Discovery** — pages through `https://studio-api-prod.suno.com/api/feed/v3` with cursor pagination (500 ms rate limit between requests). Filters exclude disliked, trashed, studio-project, and stem clips; results are scoped to your user id.
+- **Downloads** — each clip’s audio, `image_large_url`, and full feed JSON snippet are downloaded via the `chrome.downloads` API into the chosen subfolder (no save-as prompt), with 2 concurrent workers, exponential-backoff retries, a 5-minute per-file timeout, and `uniquify` conflict handling. Audio failure fails the clip; image/metadata failures are reported but do not block the audio.
+- **Format** — the audio extension (`.mp3` / `.m4a`) is inferred from the clip's `audio_url`, with a `cdn1.suno.ai/<id>.mp3` fallback.
 
 ## Notes & limitations
 
@@ -67,10 +71,10 @@ Downloads/<subfolder>/<Song Title> [<id>].mp3
 
 | Permission | Why |
 | --- | --- |
-| `storage` | Persist token and download subfolder |
-| `downloads` | Save audio files to the Downloads folder |
-| `scripting` + `activeTab` | Extract the session token from the active suno.com tab |
-| `host_permissions` | suno.com, studio-api.prod.suno.com, cdn1/cdn2.suno.ai |
+| `storage` | Persist token, user id, and download subfolder |
+| `downloads` | Save audio, images, and metadata to the Downloads folder |
+| `scripting` + `activeTab` | Extract the session token and user id from the active suno.com tab |
+| `host_permissions` | suno.com, studio-api-prod.suno.com, cdn1/cdn2.suno.ai |
 
 ## Development
 

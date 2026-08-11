@@ -1,8 +1,9 @@
-const API_BASE = "https://studio-api.prod.suno.com/api";
+const API_BASE = "https://studio-api-prod.suno.com/api";
 const API_DELAY_MS = 500;
 const MAX_RETRIES = 3;
 const CONCURRENT_DOWNLOADS = 2;
 const DOWNLOAD_TIMEOUT_MS = 300000;
+const FEED_PAGE_LIMIT = 20;
 
 const Actions = {
   EXTRACT_TOKEN: "extractToken",
@@ -17,6 +18,7 @@ const Actions = {
 
 let state = {
   token: null,
+  userId: null,
   downloadPath: "SunoDownloads",
   clips: [],
   discoverProgress: { phase: "idle", page: 0, count: 0 },
@@ -35,14 +37,22 @@ let cancelRequested = false;
 let lastApiRequest = 0;
 
 async function loadState() {
-  const stored = await chrome.storage.local.get(["token", "downloadPath"]);
+  const stored = await chrome.storage.local.get(["token", "userId", "downloadPath"]);
   if (stored.token) state.token = stored.token;
+  if (stored.userId) state.userId = stored.userId;
   if (stored.downloadPath) state.downloadPath = stored.downloadPath;
 }
 
-async function saveToken(token) {
+async function saveAuth(token, userId) {
   state.token = token;
-  await chrome.storage.local.set({ token });
+  state.userId = userId;
+  await chrome.storage.local.set({ token, userId });
+}
+
+async function clearAuth() {
+  state.token = null;
+  state.userId = null;
+  await chrome.storage.local.remove(["token", "userId"]);
 }
 
 async function saveDownloadPath(path) {
@@ -66,31 +76,50 @@ async function apiRateLimit() {
   lastApiRequest = Date.now();
 }
 
-async function apiFetch(endpoint) {
+async function apiFetch(endpoint, options = {}) {
   if (!state.token) {
     throw new Error("Not connected — open suno.com and click Connect.");
   }
   await apiRateLimit();
   const url = endpoint.startsWith("http") ? endpoint : `${API_BASE}${endpoint}`;
-  const response = await fetch(url, {
+  const method = options.method || "GET";
+  const fetchOptions = {
+    method,
     headers: {
       Authorization: `Bearer ${state.token}`,
       "Content-Type": "application/json",
     },
-  });
+  };
+  if (options.body !== undefined) {
+    fetchOptions.body = JSON.stringify(options.body);
+  }
+  const response = await fetch(url, fetchOptions);
   if (!response.ok) {
     if (response.status === 401) {
-      state.token = null;
-      await chrome.storage.local.remove("token");
+      await clearAuth();
       throw new Error("Token expired — reconnect on suno.com.");
     }
     if (response.status === 429) {
       await sleep(5000);
-      return apiFetch(endpoint);
+      return apiFetch(endpoint, options);
     }
     throw new Error(`API error: ${response.status}`);
   }
   return response.json();
+}
+
+function buildFeedFilters(userId) {
+  return {
+    disliked: "False",
+    trashed: "False",
+    fromStudioProject: { presence: "False" },
+    stem: { presence: "False" },
+    stemComplement: "False",
+    user: {
+      presence: "True",
+      userId,
+    },
+  };
 }
 
 function sanitizeFilename(name) {
@@ -122,13 +151,33 @@ function getAudioExtension(url) {
   return "mp3";
 }
 
-function getDownloadFilename(clip, basePath) {
+function getImageExtension(url) {
+  if (!url) return "jpeg";
+  const path = url.toLowerCase().split("?")[0];
+  const match = path.match(/\.([a-z0-9]+)$/);
+  if (match) return match[1];
+  return "jpeg";
+}
+
+function getBaseFilename(clip) {
   const title = sanitizeFilename(clip.title || "Untitled");
   const shortId = clip.id ? clip.id.substring(0, 8) : "unknown";
+  return `${title} [${shortId}]`;
+}
+
+function getAudioFilename(clip, basePath) {
   const audioUrl = getAudioUrl(clip);
   const ext = getAudioExtension(audioUrl);
-  const filename = `${title} [${shortId}].${ext}`;
-  return `${basePath}/${filename}`;
+  return `${basePath}/${getBaseFilename(clip)}.${ext}`;
+}
+
+function getImageFilename(clip, basePath) {
+  const ext = getImageExtension(clip.image_large_url);
+  return `${basePath}/${getBaseFilename(clip)}.${ext}`;
+}
+
+function getMetadataFilename(clip, basePath) {
+  return `${basePath}/${getBaseFilename(clip)}-metadata.json`;
 }
 
 function normalizeClip(clip) {
@@ -137,10 +186,16 @@ function normalizeClip(clip) {
     id: clip.id,
     title: clip.title || "Untitled",
     audio_url: audioUrl,
+    image_large_url: clip.image_large_url || null,
     format: getAudioExtension(audioUrl),
     duration: clip.metadata?.duration || null,
     created_at: clip.created_at || null,
+    clipData: clip,
   };
+}
+
+function clipsForPopup(clips) {
+  return clips.map(({ clipData, ...rest }) => rest);
 }
 
 async function extractTokenFromTab(tabId) {
@@ -158,17 +213,21 @@ async function extractTokenFromTab(tabId) {
       }
       try {
         const token = await window.Clerk.session.getToken();
-        return { success: true, token };
+        const userId = window.Clerk.user?.id || null;
+        if (!userId) {
+          return { success: false, error: "Could not read user id from Clerk" };
+        }
+        return { success: true, token, userId };
       } catch (err) {
         return { success: false, error: err.message };
       }
     },
   });
   const result = results?.[0]?.result;
-  if (!result?.success || !result.token) {
+  if (!result?.success || !result.token || !result.userId) {
     return { success: false, error: result?.error || "Failed to extract token" };
   }
-  await saveToken(result.token);
+  await saveAuth(result.token, result.userId);
   return { success: true };
 }
 
@@ -179,25 +238,31 @@ async function discoverClips(limit = 0) {
   if (!state.token) {
     return { success: false, error: "Not connected" };
   }
+  if (!state.userId) {
+    return { success: false, error: "Missing user id — reconnect on suno.com." };
+  }
 
   isDiscovering = true;
   cancelRequested = false;
   const clips = [];
   let page = 0;
   let hasMore = true;
+  let cursor = null;
+  const filters = buildFeedFilters(state.userId);
 
   state.discoverProgress = { phase: "discovering", page: 0, count: 0 };
   broadcast(Actions.DISCOVER_PROGRESS, { progress: state.discoverProgress });
 
   try {
     while (hasMore && !cancelRequested) {
-      const params = new URLSearchParams({
-        hide_disliked: "false",
-        hide_gen_stems: "true",
-        hide_studio_clips: "false",
-        page: page.toString(),
+      const data = await apiFetch("/feed/v3", {
+        method: "POST",
+        body: {
+          cursor,
+          limit: FEED_PAGE_LIMIT,
+          filters,
+        },
       });
-      const data = await apiFetch(`/feed/v2?${params}`);
       const pageClips = data.clips || [];
       for (const clip of pageClips) {
         if (limit > 0 && clips.length >= limit) {
@@ -208,12 +273,14 @@ async function discoverClips(limit = 0) {
         if (normalized.audio_url) clips.push(normalized);
       }
       hasMore = hasMore && data.has_more && pageClips.length > 0;
+      cursor = data.next_cursor || null;
+      if (!cursor) hasMore = false;
       page++;
       state.discoverProgress = {
         phase: "discovering",
         page,
         count: clips.length,
-        totalEstimate: data.num_total_results || null,
+        totalEstimate: null,
       };
       broadcast(Actions.DISCOVER_PROGRESS, { progress: state.discoverProgress });
       if (limit > 0 && clips.length >= limit) break;
@@ -226,7 +293,7 @@ async function discoverClips(limit = 0) {
       count: clips.length,
     };
     broadcast(Actions.DISCOVER_PROGRESS, { progress: state.discoverProgress });
-    return { success: true, count: clips.length, clips };
+    return { success: true, count: clips.length, clips: clipsForPopup(clips) };
   } catch (err) {
     state.discoverProgress = { phase: "error", page, count: clips.length, error: err.message };
     broadcast(Actions.DISCOVER_PROGRESS, { progress: state.discoverProgress });
@@ -288,20 +355,50 @@ function downloadFromUrl(url, filename) {
   });
 }
 
-async function downloadClipWithRetry(clip, basePath, attempt = 0) {
-  const url = clip.audio_url;
-  if (!url) throw new Error("No audio URL");
-  const filename = getDownloadFilename(clip, basePath);
+async function downloadJsonMetadata(clip, basePath) {
+  const json = JSON.stringify(clip.clipData || clip, null, 2);
+  const dataUrl =
+    "data:application/json;charset=utf-8," + encodeURIComponent(json);
+  return downloadFromUrl(dataUrl, getMetadataFilename(clip, basePath));
+}
+
+async function downloadWithRetry(fn, attempt = 0) {
   try {
-    return await downloadFromUrl(url, filename);
+    return await fn();
   } catch (err) {
     if (attempt < MAX_RETRIES) {
       const delay = 2000 * Math.pow(2, attempt);
       await sleep(delay);
-      return downloadClipWithRetry(clip, basePath, attempt + 1);
+      return downloadWithRetry(fn, attempt + 1);
     }
     throw err;
   }
+}
+
+async function downloadClipAssets(clip, basePath) {
+  const assetErrors = [];
+
+  await downloadWithRetry(() =>
+    downloadFromUrl(clip.audio_url, getAudioFilename(clip, basePath)),
+  );
+
+  if (clip.image_large_url) {
+    try {
+      await downloadWithRetry(() =>
+        downloadFromUrl(clip.image_large_url, getImageFilename(clip, basePath)),
+      );
+    } catch (err) {
+      assetErrors.push(`image: ${err.message}`);
+    }
+  }
+
+  try {
+    await downloadWithRetry(() => downloadJsonMetadata(clip, basePath));
+  } catch (err) {
+    assetErrors.push(`metadata: ${err.message}`);
+  }
+
+  return { assetErrors };
 }
 
 async function runDownloadQueue(clips, basePath) {
@@ -319,7 +416,16 @@ async function runDownloadQueue(clips, basePath) {
       broadcast(Actions.DOWNLOAD_PROGRESS, { progress: state.downloadProgress });
 
       try {
-        await downloadClipWithRetry(clip, basePath);
+        if (!clip.audio_url) throw new Error("No audio URL");
+        const { assetErrors } = await downloadClipAssets(clip, basePath);
+        if (assetErrors.length) {
+          errors.push({
+            id: clip.id,
+            title: clip.title,
+            error: assetErrors.join("; "),
+          });
+          state.downloadProgress.errors = [...errors];
+        }
       } catch (err) {
         errors.push({ id: clip.id, title: clip.title, error: err.message });
         state.downloadProgress.errors = [...errors];
@@ -403,10 +509,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       case Actions.GET_STATE:
         sendResponse({
           success: true,
-          connected: !!state.token,
+          connected: !!(state.token && state.userId),
           downloadPath: state.downloadPath,
           clipCount: state.clips.length,
-          clips: state.clips,
+          clips: clipsForPopup(state.clips),
           discoverProgress: state.discoverProgress,
           downloadProgress: state.downloadProgress,
           isDiscovering,

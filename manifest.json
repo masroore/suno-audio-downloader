@@ -1,12 +1,13 @@
 {
   "manifest_version": 3,
   "name": "Suno Audio Downloader",
-  "version": "1.0.0",
-  "description": "Discover and bulk-download MP3/M4A audio from your Suno library.",
+  "version": "1.1.0",
+  "description": "Discover and bulk-download MP3/M4A audio, cover images, and metadata from your Suno library.",
   "permissions": ["storage", "downloads", "scripting", "activeTab"],
   "host_permissions": [
     "https://suno.com/*",
     "https://*.suno.com/*",
+    "https://studio-api-prod.suno.com/*",
     "https://studio-api.prod.suno.com/*",
     "https://cdn1.suno.ai/*",
     "https://cdn2.suno.ai/*"
