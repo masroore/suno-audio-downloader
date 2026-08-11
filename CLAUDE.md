@@ -113,5 +113,6 @@ State is broadcast to popup via `chrome.runtime.sendMessage` on every phase chan
 
 ## Version History
 
+- v1.2.0: Added per-clip download status indicators in the popup
 - v1.1.0: Added user ID handling, cover image downloads, metadata sidecar files
 - v1.0.0: Initial release with audio-only downloads
