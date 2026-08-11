@@ -113,6 +113,7 @@ async function apiFetch(endpoint, options = {}) {
     method,
     headers: {
       "Content-Type": "application/json",
+      "Authorization": `Bearer ${state.token}`,
       "browser-token": JSON.stringify(browserToken),
       "device-id": state.deviceId,
     },
@@ -377,6 +378,8 @@ async function discoverClips(limit = 0) {
       error: err?.message || String(err),
       stack: err?.stack,
     });
+    // Also log to console to ensure visibility
+    console.error("[suno-dl] DISCOVER ERROR:", err);
     state.discoverProgress = { phase: "error", page, count: clips.length, error: err.message };
     broadcast(Actions.DISCOVER_PROGRESS, { progress: state.discoverProgress });
     return { success: false, error: err.message };

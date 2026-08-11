@@ -26,6 +26,7 @@ A Chrome/Firefox Manifest V3 browser extension that discovers and bulk-downloads
 **Authentication**
 - Injects script into `suno.com` tab via `chrome.scripting.executeScript` with `world: "MAIN"`
 - Reads `window.Clerk.session.getToken()` and `window.Clerk.user.id`
+- Token sent as `Authorization: Bearer <token>` header in all API requests
 - Tokens stored locally; auto-cleared on HTTP 401
 
 **Feed Discovery**
