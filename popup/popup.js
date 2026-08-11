@@ -25,6 +25,9 @@ const el = {
   progressDetail: document.getElementById("progress-detail"),
   clipCount: document.getElementById("clip-count"),
   clipList: document.getElementById("clip-list"),
+  selectBar: document.getElementById("select-bar"),
+  chkSelectAll: document.getElementById("chk-select-all"),
+  selectedCount: document.getElementById("selected-count"),
 };
 
 function send(action, data = {}) {
@@ -49,16 +52,23 @@ function formatDuration(seconds) {
 }
 
 function renderClips(clips, statuses = {}) {
+  currentClips = clips;
   el.clipCount.textContent = String(clips.length);
   el.clipList.innerHTML = "";
+  el.selectBar.hidden = clips.length === 0;
+  selectedIds = new Set(clips.map((clip) => clip.id));
+
   const preview = clips.slice(0, 50);
   for (const clip of preview) {
     const li = document.createElement("li");
     li.dataset.id = clip.id;
     const duration = formatDuration(clip.duration);
     li.innerHTML = `
-      <span class="clip-title">${escapeHtml(clip.title)}</span>
-      <span class="clip-meta">${escapeHtml(clip.format.toUpperCase())}${duration ? ` · ${duration}` : ""}</span>
+      <label class="clip-row">
+        <input type="checkbox" class="clip-chk" data-id="${escapeHtml(clip.id)}" checked />
+        <span class="clip-title">${escapeHtml(clip.title)}</span>
+        <span class="clip-meta">${escapeHtml(clip.format.toUpperCase())}${duration ? ` · ${duration}` : ""}</span>
+      </label>
     `;
     el.clipList.appendChild(li);
     if (statuses[clip.id]) setClipStatus(clip.id, statuses[clip.id]);
@@ -69,6 +79,23 @@ function renderClips(clips, statuses = {}) {
     li.textContent = `…and ${clips.length - 50} more`;
     el.clipList.appendChild(li);
   }
+  updateSelectAllState();
+  updateDownloadButton();
+}
+
+function updateSelectAllState() {
+  const total = currentClips.length;
+  el.chkSelectAll.checked = total > 0 && selectedIds.size === total;
+  el.chkSelectAll.indeterminate = selectedIds.size > 0 && selectedIds.size < total;
+  el.selectedCount.textContent = `${selectedIds.size} selected`;
+}
+
+function updateDownloadButton() {
+  el.btnDownload.textContent =
+    selectedIds.size === clipCount
+      ? "Download all"
+      : `Download selected (${selectedIds.size})`;
+  el.btnDownload.disabled = busy || clipCount === 0 || selectedIds.size === 0;
 }
 
 function setClipStatus(clipId, status) {
@@ -173,10 +200,11 @@ function renderProgressStatuses(progress) {
   }
 }
 
-function setBusy(busy) {
+function setBusy(nextBusy) {
+  busy = nextBusy;
   el.btnConnect.disabled = busy;
   el.btnDiscover.disabled = busy || !connected;
-  el.btnDownload.disabled = busy || clipCount === 0;
+  updateDownloadButton();
   if (!el.btnResume.hidden) {
     el.btnResume.disabled = busy;
   }
@@ -184,6 +212,9 @@ function setBusy(busy) {
 
 let connected = false;
 let clipCount = 0;
+let busy = false;
+let selectedIds = new Set();
+let currentClips = [];
 
 async function refreshState() {
   const res = await send(Actions.GET_STATE);
@@ -259,6 +290,30 @@ async function persistDownloadPath() {
 el.downloadPath.addEventListener("change", persistDownloadPath);
 el.downloadPath.addEventListener("blur", persistDownloadPath);
 
+el.clipList.addEventListener("change", (event) => {
+  if (!event.target.classList.contains("clip-chk")) return;
+  const id = event.target.dataset.id;
+  if (event.target.checked) {
+    selectedIds.add(id);
+  } else {
+    selectedIds.delete(id);
+  }
+  updateSelectAllState();
+  updateDownloadButton();
+});
+
+el.chkSelectAll.addEventListener("change", () => {
+  const checked = el.chkSelectAll.checked;
+  selectedIds = checked
+    ? new Set(currentClips.map((clip) => clip.id))
+    : new Set();
+  el.clipList.querySelectorAll(".clip-chk").forEach((checkbox) => {
+    checkbox.checked = checked;
+  });
+  updateSelectAllState();
+  updateDownloadButton();
+});
+
 el.btnDiscover.addEventListener("click", async () => {
   setBusy(true);
   el.progressPanel.hidden = false;
@@ -276,7 +331,12 @@ el.btnDiscover.addEventListener("click", async () => {
 el.btnDownload.addEventListener("click", async () => {
   setBusy(true);
   el.btnCancel.disabled = false;
-  const res = await send(Actions.START_DOWNLOAD, { limit: getLimit() });
+  const idsToDownload =
+    selectedIds.size === clipCount ? null : [...selectedIds];
+  const res = await send(Actions.START_DOWNLOAD, {
+    limit: getLimit(),
+    selectedIds: idsToDownload,
+  });
   setBusy(false);
   el.btnCancel.disabled = true;
   if (!res.success) {

@@ -616,7 +616,7 @@ async function runDownloadQueue(clips, basePath) {
   return { completed, errors };
 }
 
-async function startDownload(limit = 0) {
+async function startDownload(limit = 0, selectedIds = null) {
   if (isDownloading) {
     return { success: false, error: "Download already in progress" };
   }
@@ -627,8 +627,12 @@ async function startDownload(limit = 0) {
   isDownloading = true;
   cancelRequested = false;
   const basePath = sanitizeDownloadFolder(state.downloadPath);
-  const clips = limit > 0 ? state.clips.slice(0, limit) : state.clips;
-  const selectedIds = new Set(clips.map((clip) => clip.id));
+  let clips = limit > 0 ? state.clips.slice(0, limit) : state.clips;
+  if (Array.isArray(selectedIds)) {
+    const selectedIdSet = new Set(selectedIds);
+    clips = clips.filter((clip) => selectedIdSet.has(clip.id));
+  }
+  const selectedIdSet = new Set(clips.map((clip) => clip.id));
 
   state.downloadProgress = {
     phase: "downloading",
@@ -637,7 +641,7 @@ async function startDownload(limit = 0) {
     currentTitle: "",
     currentClipId: "",
     statuses: Object.fromEntries(
-      state.clips.map((clip) => [clip.id, selectedIds.has(clip.id) ? null : "skipped"]),
+      state.clips.map((clip) => [clip.id, selectedIdSet.has(clip.id) ? null : "skipped"]),
     ),
     errors: [],
   };
@@ -725,7 +729,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         sendResponse({ success: true, started: true });
         break;
       case Actions.START_DOWNLOAD:
-        sendResponse(await startDownload(message.limit || 0));
+        sendResponse(
+          await startDownload(message.limit || 0, message.selectedIds ?? null),
+        );
         break;
       case Actions.RESUME_DOWNLOAD: {
         // Re-run startDownload but exclude already-completed clips
