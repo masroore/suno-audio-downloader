@@ -25,6 +25,10 @@ const el = {
   clipList: document.getElementById("clip-list"),
 };
 
+// Map of clipId -> "ok" | "error" | "active" | null.
+// Populated during and after a download run; cleared on new discover.
+let clipDownloadStatus = {};
+
 function send(action, data = {}) {
   return chrome.runtime.sendMessage({ action, ...data });
 }
@@ -47,11 +51,13 @@ function formatDuration(seconds) {
 }
 
 function renderClips(clips) {
+  clipDownloadStatus = {};
   el.clipCount.textContent = String(clips.length);
   el.clipList.innerHTML = "";
   const preview = clips.slice(0, 50);
   for (const clip of preview) {
     const li = document.createElement("li");
+    li.dataset.id = clip.id;
     const duration = formatDuration(clip.duration);
     li.innerHTML = `
       <span class="clip-title">${escapeHtml(clip.title)}</span>
@@ -65,6 +71,27 @@ function renderClips(clips) {
     li.textContent = `…and ${clips.length - 50} more`;
     el.clipList.appendChild(li);
   }
+}
+
+function setClipStatus(clipId, status) {
+  clipDownloadStatus[clipId] = status;
+  const li = [...el.clipList.querySelectorAll("li[data-id]")]
+    .find((item) => item.dataset.id === String(clipId));
+  if (!li) return;
+
+  li.querySelector(".clip-status")?.remove();
+  if (!status) return;
+
+  const badge = document.createElement("span");
+  badge.className = `clip-status clip-status-${status}`;
+  badge.setAttribute(
+    "aria-label",
+    status === "ok" ? "Downloaded" : status === "error" ? "Failed" : "Downloading",
+  );
+  badge.textContent = status === "ok" ? "✓" : status === "error" ? "✗" : "↓";
+  const meta = li.querySelector(".clip-meta");
+  if (meta) meta.insertAdjacentElement("afterend", badge);
+  else li.appendChild(badge);
 }
 
 function escapeHtml(str) {
@@ -110,6 +137,9 @@ function updateProgress(progress, type) {
       el.progressDetail.textContent = progress.currentTitle || "";
       el.progressBar.style.width = `${pct}%`;
       el.btnCancel.disabled = false;
+      if (progress.currentClipId && !clipDownloadStatus[progress.currentClipId]) {
+        setClipStatus(progress.currentClipId, "active");
+      }
     } else if (progress.phase === "complete") {
       const failed = progress.errors?.length || 0;
       setStatus(
@@ -124,10 +154,20 @@ function updateProgress(progress, type) {
         : "";
       el.progressBar.style.width = "100%";
       el.btnCancel.disabled = true;
+      settleClipStatuses(progress);
     } else if (progress.phase === "cancelled") {
       el.progressText.textContent = "Download cancelled";
       el.btnCancel.disabled = true;
+      settleClipStatuses(progress);
     }
+  }
+}
+
+function settleClipStatuses(progress) {
+  const errorIds = new Set((progress.errors || []).map((error) => String(error.id)));
+  for (const [id, status] of Object.entries(clipDownloadStatus)) {
+    if (!status) continue;
+    setClipStatus(id, errorIds.has(String(id)) ? "error" : "ok");
   }
 }
 

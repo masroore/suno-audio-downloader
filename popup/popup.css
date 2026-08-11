@@ -174,6 +174,8 @@ button.secondary {
 }
 
 #clip-list li {
+  display: flex;
+  align-items: baseline;
   padding: 6px 0;
   border-bottom: 1px solid var(--border);
   font-size: 12px;
@@ -193,4 +195,29 @@ button.secondary {
 .clip-meta {
   color: var(--muted);
   font-size: 11px;
+}
+
+/* Per-clip download status badges */
+.clip-status {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.clip-status-ok {
+  color: #1a7f37;
+  background: #dafbe1;
+}
+
+.clip-status-error {
+  color: #cf222e;
+  background: #ffebe9;
+}
+
+.clip-status-active {
+  color: #9a6700;
+  background: #fff8c5;
 }
