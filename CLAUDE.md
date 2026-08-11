@@ -78,7 +78,7 @@ All state lives in `background.js`:
 - `state.downloadPath`: target subfolder name (sanitized)
 - `state.clips[]`: discovered clips with normalized `audio_url`, `image_large_url`, `clipData`
 - `state.discoverProgress`: `{ phase, page, count }`
-- `state.downloadProgress`: `{ phase, current, total, currentTitle, errors[] }`
+- `state.downloadProgress`: `{ phase, current, total, currentTitle, currentClipId, errors[] }`
 
 State is broadcast to popup via `chrome.runtime.sendMessage` on every phase change.
 
