@@ -30,8 +30,8 @@ A Chrome/Firefox Manifest V3 browser extension that discovers and bulk-downloads
 - Tokens stored locally; auto-cleared on HTTP 401
 
 **Feed Discovery**
-- Endpoint: `POST https://studio-api-prod.suno.com/api/feed/v3`
-- Pagination: cursor-based with `FEED_PAGE_LIMIT = 20` clips per page
+- Endpoints: `POST https://studio-api-prod.suno.com/api/feed/v3/offset` for non-zero start offsets, then `POST https://studio-api-prod.suno.com/api/feed/v3` for cursor pagination
+- Pagination: offset seek followed by cursor-based pages
 - Filters: excludes disliked, trashed, studio-project, and stem clips; scoped to current user ID
 - Rate limit: 500ms between requests, 5s backoff on HTTP 429
 

@@ -379,6 +379,13 @@ async function fetchFeedPage(cursor, pageSize, filters) {
   });
 }
 
+async function fetchFeedPageAtOffset(offset, filters) {
+  return apiFetch("/feed/v3/offset", {
+    method: "POST",
+    body: { offset, filters },
+  });
+}
+
 async function fetchFeedPageWithFallback(cursor, activePageSize, requestedPageSize, filters) {
   let lastError = null;
   const ladder = getPageSizeCandidates(requestedPageSize);
@@ -416,6 +423,7 @@ async function discoverClips(options = {}) {
   let cursor = null;
   let activePageSize = requestedPageSize;
   let skipped = 0;
+  let offsetRequestPending = start > 0;
   const filters = buildFeedFilters(state.userId);
 
   debugLog("discover start", {
@@ -442,15 +450,21 @@ async function discoverClips(options = {}) {
       debugLog("discover page request", {
         page,
         cursor,
+        offset: offsetRequestPending ? start : null,
         limit: activePageSize,
         filters,
       });
-      const pageResult = await fetchFeedPageWithFallback(
-        cursor,
-        activePageSize,
-        requestedPageSize,
-        filters,
-      );
+      const usedOffset = offsetRequestPending;
+      const pageResult = usedOffset
+        ? { data: await fetchFeedPageAtOffset(start, filters), pageSize: activePageSize }
+        : await fetchFeedPageWithFallback(
+          cursor,
+          activePageSize,
+          requestedPageSize,
+          filters,
+        );
+      offsetRequestPending = false;
+      if (usedOffset) skipped = start;
       if (pageResult.pageSize !== activePageSize) {
         debugLog("discover page size fallback", {
           requestedPageSize,
@@ -474,7 +488,7 @@ async function discoverClips(options = {}) {
         const seenKey = clip?.id || `page-${page}-clip-${skipped + clips.length}`;
         if (seenIds.has(seenKey)) continue;
         seenIds.add(seenKey);
-        if (skipped < start) {
+        if (!usedOffset && skipped < start) {
           skipped++;
           continue;
         }
