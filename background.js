@@ -265,9 +265,17 @@ async function extractTokenFromTab(tabId) {
       }
       try {
         const token = await window.Clerk.session.getToken();
-        const userId = window.Clerk.user?.id || null;
+
+        // Extract Suno UUID from localStorage session
+        let userId = null;
+        const sessionData = localStorage.getItem('session');
+        if (sessionData) {
+          const parsed = JSON.parse(sessionData);
+          userId = parsed?.identity?.id;
+        }
+
         if (!userId) {
-          return { success: false, error: "Could not read user id from Clerk" };
+          return { success: false, error: "Could not read Suno user ID from session" };
         }
         return { success: true, token, userId };
       } catch (err) {
