@@ -25,6 +25,7 @@ const Actions = {
 let state = {
   token: null,
   userId: null,
+  deviceId: null,
   downloadPath: "SunoDownloads",
   clips: [],
   discoverProgress: { phase: "idle", page: 0, count: 0 },
@@ -43,9 +44,15 @@ let cancelRequested = false;
 let lastApiRequest = 0;
 
 async function loadState() {
-  const stored = await chrome.storage.local.get(["token", "userId", "downloadPath"]);
+  const stored = await chrome.storage.local.get(["token", "userId", "deviceId", "downloadPath"]);
   if (stored.token) state.token = stored.token;
   if (stored.userId) state.userId = stored.userId;
+  if (stored.deviceId) state.deviceId = stored.deviceId;
+  else {
+    // Generate and persist a device ID
+    state.deviceId = crypto.randomUUID();
+    await chrome.storage.local.set({ deviceId: state.deviceId });
+  }
   if (stored.downloadPath) state.downloadPath = sanitizeDownloadFolder(stored.downloadPath);
 }
 
@@ -99,11 +106,19 @@ async function apiFetch(endpoint, options = {}) {
   await apiRateLimit();
   const url = endpoint.startsWith("http") ? endpoint : `${API_BASE}${endpoint}`;
   const method = options.method || "GET";
+
+  // Generate browser-token with timestamp
+  const browserToken = {
+    token: btoa(JSON.stringify({ timestamp: Date.now() }))
+  };
+
   const fetchOptions = {
     method,
     headers: {
       Authorization: `Bearer ${state.token}`,
       "Content-Type": "application/json",
+      "browser-token": JSON.stringify(browserToken),
+      "device-id": state.deviceId,
     },
   };
   if (options.body !== undefined) {
