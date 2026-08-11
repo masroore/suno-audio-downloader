@@ -100,9 +100,6 @@ async function apiRateLimit() {
 }
 
 async function apiFetch(endpoint, options = {}) {
-  if (!state.token) {
-    throw new Error("Not connected — open suno.com and click Connect.");
-  }
   await apiRateLimit();
   const url = endpoint.startsWith("http") ? endpoint : `${API_BASE}${endpoint}`;
   const method = options.method || "GET";
@@ -115,7 +112,6 @@ async function apiFetch(endpoint, options = {}) {
   const fetchOptions = {
     method,
     headers: {
-      Authorization: `Bearer ${state.token}`,
       "Content-Type": "application/json",
       "browser-token": JSON.stringify(browserToken),
       "device-id": state.deviceId,
