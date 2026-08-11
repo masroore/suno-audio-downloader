@@ -56,3 +56,5 @@ coverage/
 .env
 .env.*
 !.env.example
+ref/
+.commandcode/
