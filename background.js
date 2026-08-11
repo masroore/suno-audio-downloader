@@ -624,4 +624,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   return true;
 });
 
+// Service worker startup log
+console.log("[suno-dl] Service worker started", {
+  timestamp: new Date().toISOString(),
+  version: chrome.runtime.getManifest().version
+});
+debugLog("Service worker initialized");
 loadState();
