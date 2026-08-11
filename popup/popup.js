@@ -25,10 +25,6 @@ const el = {
   clipList: document.getElementById("clip-list"),
 };
 
-// Map of clipId -> "ok" | "error" | "active" | null.
-// Populated during and after a download run; cleared on new discover.
-let clipDownloadStatus = {};
-
 function send(action, data = {}) {
   return chrome.runtime.sendMessage({ action, ...data });
 }
@@ -50,8 +46,7 @@ function formatDuration(seconds) {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-function renderClips(clips) {
-  clipDownloadStatus = {};
+function renderClips(clips, statuses = {}) {
   el.clipCount.textContent = String(clips.length);
   el.clipList.innerHTML = "";
   const preview = clips.slice(0, 50);
@@ -64,6 +59,7 @@ function renderClips(clips) {
       <span class="clip-meta">${escapeHtml(clip.format.toUpperCase())}${duration ? ` · ${duration}` : ""}</span>
     `;
     el.clipList.appendChild(li);
+    if (statuses[clip.id]) setClipStatus(clip.id, statuses[clip.id]);
   }
   if (clips.length > 50) {
     const li = document.createElement("li");
@@ -74,21 +70,26 @@ function renderClips(clips) {
 }
 
 function setClipStatus(clipId, status) {
-  clipDownloadStatus[clipId] = status;
   const li = [...el.clipList.querySelectorAll("li[data-id]")]
     .find((item) => item.dataset.id === String(clipId));
   if (!li) return;
 
   li.querySelector(".clip-status")?.remove();
-  if (!status) return;
+  if (!status || status === "pending") return;
 
   const badge = document.createElement("span");
   badge.className = `clip-status clip-status-${status}`;
   badge.setAttribute(
     "aria-label",
-    status === "ok" ? "Downloaded" : status === "error" ? "Failed" : "Downloading",
+    status === "ok"
+      ? "Downloaded"
+      : status === "error"
+        ? "Failed"
+        : status === "skipped"
+          ? "Not included"
+          : "Downloading",
   );
-  badge.textContent = status === "ok" ? "✓" : status === "error" ? "✗" : "↓";
+  badge.textContent = status === "ok" ? "✓" : status === "error" ? "✗" : status === "skipped" ? "–" : "↓";
   const meta = li.querySelector(".clip-meta");
   if (meta) meta.insertAdjacentElement("afterend", badge);
   else li.appendChild(badge);
@@ -137,7 +138,7 @@ function updateProgress(progress, type) {
       el.progressDetail.textContent = progress.currentTitle || "";
       el.progressBar.style.width = `${pct}%`;
       el.btnCancel.disabled = false;
-      if (progress.currentClipId && !clipDownloadStatus[progress.currentClipId]) {
+      if (progress.currentClipId) {
         setClipStatus(progress.currentClipId, "active");
       }
     } else if (progress.phase === "complete") {
@@ -154,20 +155,18 @@ function updateProgress(progress, type) {
         : "";
       el.progressBar.style.width = "100%";
       el.btnCancel.disabled = true;
-      settleClipStatuses(progress);
+      renderProgressStatuses(progress);
     } else if (progress.phase === "cancelled") {
       el.progressText.textContent = "Download cancelled";
       el.btnCancel.disabled = true;
-      settleClipStatuses(progress);
+      renderProgressStatuses(progress);
     }
   }
 }
 
-function settleClipStatuses(progress) {
-  const errorIds = new Set((progress.errors || []).map((error) => String(error.id)));
-  for (const [id, status] of Object.entries(clipDownloadStatus)) {
-    if (!status) continue;
-    setClipStatus(id, errorIds.has(String(id)) ? "error" : "ok");
+function renderProgressStatuses(progress) {
+  for (const [id, status] of Object.entries(progress.statuses || {})) {
+    setClipStatus(id, status);
   }
 }
 
@@ -186,7 +185,9 @@ async function refreshState() {
   connected = res.connected;
   clipCount = res.clipCount;
   el.downloadPath.value = (res.downloadPath || "SunoDownloads").replace(/[\\/]+/g, "");
-  if (res.clips?.length) renderClips(res.clips);
+  if (Array.isArray(res.clips)) {
+    renderClips(res.clips, res.downloadProgress?.statuses);
+  }
   if (res.isDiscovering || res.isDownloading) {
     setBusy(true);
     el.btnCancel.disabled = false;
@@ -202,7 +203,7 @@ async function refreshState() {
   if (res.discoverProgress?.phase === "discovering") {
     updateProgress(res.discoverProgress, "discover");
   }
-  if (res.downloadProgress?.phase === "downloading") {
+  if (res.downloadProgress?.phase && res.downloadProgress.phase !== "idle") {
     updateProgress(res.downloadProgress, "download");
   }
 }

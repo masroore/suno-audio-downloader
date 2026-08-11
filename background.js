@@ -35,6 +35,7 @@ let state = {
     total: 0,
     currentTitle: "",
     currentClipId: "",
+    statuses: {},
     errors: [],
   },
 };
@@ -557,6 +558,7 @@ async function runDownloadQueue(clips, basePath) {
       if (index >= clips.length) break;
 
       const clip = clips[index];
+      state.downloadProgress.statuses[clip.id] = "active";
       state.downloadProgress.currentTitle = clip.title;
       state.downloadProgress.currentClipId = clip.id;
       broadcast(Actions.DOWNLOAD_PROGRESS, { progress: state.downloadProgress });
@@ -570,11 +572,17 @@ async function runDownloadQueue(clips, basePath) {
             title: clip.title,
             error: assetErrors.join("; "),
           });
+          state.downloadProgress.statuses[clip.id] = "error";
           state.downloadProgress.errors = [...errors];
         }
       } catch (err) {
         errors.push({ id: clip.id, title: clip.title, error: err.message });
+        state.downloadProgress.statuses[clip.id] = "error";
         state.downloadProgress.errors = [...errors];
+      }
+
+      if (!errors.some((error) => error.id === clip.id)) {
+        state.downloadProgress.statuses[clip.id] = "ok";
       }
 
       completed++;
@@ -602,6 +610,7 @@ async function startDownload(limit = 0) {
   cancelRequested = false;
   const basePath = sanitizeDownloadFolder(state.downloadPath);
   const clips = limit > 0 ? state.clips.slice(0, limit) : state.clips;
+  const selectedIds = new Set(clips.map((clip) => clip.id));
 
   state.downloadProgress = {
     phase: "downloading",
@@ -609,6 +618,9 @@ async function startDownload(limit = 0) {
     total: clips.length,
     currentTitle: "",
     currentClipId: "",
+    statuses: Object.fromEntries(
+      state.clips.map((clip) => [clip.id, selectedIds.has(clip.id) ? null : "skipped"]),
+    ),
     errors: [],
   };
   broadcast(Actions.DOWNLOAD_PROGRESS, { progress: state.downloadProgress });
@@ -618,6 +630,13 @@ async function startDownload(limit = 0) {
     state.downloadProgress.phase = cancelRequested ? "cancelled" : "complete";
     state.downloadProgress.current = completed;
     state.downloadProgress.errors = errors;
+    if (cancelRequested) {
+      for (const id of Object.keys(state.downloadProgress.statuses)) {
+        if (state.downloadProgress.statuses[id] === null) {
+          state.downloadProgress.statuses[id] = "skipped";
+        }
+      }
+    }
     broadcast(Actions.DOWNLOAD_PROGRESS, { progress: state.downloadProgress });
     return {
       success: true,

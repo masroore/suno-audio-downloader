@@ -221,3 +221,8 @@ button.secondary {
   color: #9a6700;
   background: #fff8c5;
 }
+
+.clip-status-skipped {
+  color: var(--muted);
+  background: var(--surface);
+}
