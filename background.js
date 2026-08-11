@@ -448,10 +448,38 @@ function downloadFromUrl(url, filename) {
   });
 }
 
+function buildMetadataPayload(clip) {
+  const raw = clip.clipData || clip;
+  const meta = raw.metadata || {};
+
+  return {
+    title: raw.title,
+    play_count: raw.play_count,
+    upvote_count: raw.upvote_count,
+    id: raw.id,
+    video_url: raw.video_url,
+    audio_url: raw.audio_url,
+    media_urls: raw.media_urls || [],
+    image_url: raw.image_url,
+    style: meta.tags,
+    lyrics: meta.prompt,
+    duration: meta.duration,
+    user_id: raw.user_id,
+    display_name: raw.display_name,
+    handle: raw.handle,
+    avatar_image_url: raw.avatar_image_url,
+    reaction: raw.reaction,
+    display_tags: raw.display_tags,
+    created_at: raw.created_at,
+    is_public: raw.is_public,
+    clip_roots: raw.clip_roots,
+  };
+}
+
 async function downloadJsonMetadata(clip, basePath) {
-  const json = JSON.stringify(clip.clipData || clip, null, 2);
-  const dataUrl =
-    "data:application/json;charset=utf-8," + encodeURIComponent(json);
+  const payload = buildMetadataPayload(clip);
+  const json = JSON.stringify(payload, null, 2);
+  const dataUrl = "data:application/json;charset=utf-8," + encodeURIComponent(json);
   return downloadFromUrl(dataUrl, getMetadataFilename(clip, basePath));
 }
 
