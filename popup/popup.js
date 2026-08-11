@@ -248,15 +248,13 @@ el.btnDiscover.addEventListener("click", async () => {
   el.progressPanel.hidden = false;
   el.progressText.textContent = "Starting discovery…";
   const res = await send(Actions.DISCOVER, { limit: getLimit() });
-  setBusy(false);
   if (!res.success) {
+    setBusy(false);
     setStatus(res.error || "Discover failed", "error");
     return;
   }
-  clipCount = res.count;
-  renderClips(res.clips || []);
-  el.btnDownload.disabled = clipCount === 0;
-  setStatus(`Connected · ${clipCount} clips`, "ok");
+  // Discovery is running in the background. Progress arrives via broadcasts.
+  setStatus("Discovering…", "busy");
 });
 
 el.btnDownload.addEventListener("click", async () => {

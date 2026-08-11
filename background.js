@@ -690,7 +690,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         sendResponse({ success: true, downloadPath: state.downloadPath });
         break;
       case Actions.DISCOVER:
-        sendResponse(await discoverClips(message.limit || 0));
+        if (isDiscovering) {
+          sendResponse({ success: false, error: "Discovery already in progress" });
+          break;
+        }
+        // Fire and forget — popup polls via GET_STATE / DISCOVER_PROGRESS broadcasts
+        discoverClips(message.limit || 0).catch((err) => {
+          console.error("[suno-dl] background discover error", err);
+        });
+        sendResponse({ success: true, started: true });
         break;
       case Actions.START_DOWNLOAD:
         sendResponse(await startDownload(message.limit || 0));
