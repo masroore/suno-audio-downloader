@@ -8,7 +8,7 @@ A Chrome / Firefox (Manifest V3) extension that discovers the MP3/M4A audio in y
 
 - **Connect** — pulls your Suno session token from the active `suno.com` tab (via Clerk) and stores it locally.
 - **Discover** — walks your Suno feed (`/feed/v2`) and lists every clip with a playable audio URL.
-- **Bulk download** — downloads clips into `Downloads/<subfolder>/<Song Title>/<Song Title> [<id>].mp3` with a retry/backoff queue (2 concurrent downloads, up to 3 retries per file).
+- **Bulk download** — downloads clips into `Downloads/<subfolder>/<Song Title> [<id>].mp3` with a retry/backoff queue (2 concurrent downloads, up to 3 retries per file).
 - **Progress + cancel** — live progress bar for both discovery and downloads, cancellable at any time.
 - **Limit option** — cap discovery/downloads to N clips for testing (0 = everything).
 
@@ -46,7 +46,7 @@ A Chrome / Firefox (Manifest V3) extension that discovers the MP3/M4A audio in y
 Files are saved as:
 
 ```
-Downloads/<subfolder>/<Song Title>/<Song Title> [<id>].mp3
+Downloads/<subfolder>/<Song Title> [<id>].mp3
 ```
 
 ## How it works

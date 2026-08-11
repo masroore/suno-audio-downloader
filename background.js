@@ -128,7 +128,7 @@ function getDownloadFilename(clip, basePath) {
   const audioUrl = getAudioUrl(clip);
   const ext = getAudioExtension(audioUrl);
   const filename = `${title} [${shortId}].${ext}`;
-  return `${basePath}/${title}/${filename}`;
+  return `${basePath}/${filename}`;
 }
 
 function normalizeClip(clip) {
