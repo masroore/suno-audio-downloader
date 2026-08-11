@@ -58,3 +58,6 @@ coverage/
 !.env.example
 ref/
 .commandcode/
+
+
+.serena/
