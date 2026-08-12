@@ -536,6 +536,12 @@ async function discoverClips(options = {}) {
       page_size: activePageSize,
       clips: clips.map(({ clipData }) => clipData),
     };
+    if (!cancelRequested && count > 0 && clips.length > 0) {
+      await saveDiscoveryOptions({
+        ...state.discoveryOptions,
+        start: start + clips.length,
+      });
+    }
     state.discoverProgress = {
       phase: cancelRequested ? "cancelled" : "complete",
       page,
