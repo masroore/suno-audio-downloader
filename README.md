@@ -8,6 +8,7 @@ A Chrome / Firefox (Manifest V3) extension that discovers the audio in your Suno
 
 - **Connect** — pulls your Suno session token and user id from the active `suno.com` tab (via Clerk) and stores them locally.
 - **Discover** — walks your Suno feed (`POST /feed/v3`) with a zero-based start offset, count, and configurable API page size.
+- **Build library catalog** — discovers the full library in 1,000-clip batches and saves each batch as an aggregate JSON file.
 - **Bulk download** — for each clip, saves audio, large cover image, and a metadata sidecar into `Downloads/<subfolder>/` with a retry/backoff queue (2 concurrent clips, up to 3 retries per file).
 - **Extract JSON** — saves one aggregate JSON file containing the full raw feed metadata for the current discovery result, without downloading media.
 - **Progress + cancel** — live progress bar for both discovery and downloads, cancellable at any time.
@@ -41,9 +42,10 @@ A Chrome / Firefox (Manifest V3) extension that discovers the audio in your Suno
 2. Click the extension icon and click **Connect** (the active tab must be on suno.com).
 3. Optionally change the **Downloads folder** name (default: `SunoDownloads` — a single flat folder, no nesting).
 4. Optionally set **Start offset** (default `0`), **Count** (default `0`, meaning all remaining), and **API page size** (default `50`, allowed `1–100`). These values persist between popup opens.
-5. Click **Discover** to fetch the selected range of your library clips.
-6. Click **Download all** to save audio, cover images, and per-clip metadata.
-7. Click **Extract JSON** to save the current discovery result without downloading audio, images, or video.
+5. Enable **Build library catalog** to discover and save your full library in 1,000-clip batches, or leave it disabled for count-based discovery.
+6. Click **Discover** to fetch the selected range of your library clips.
+7. Click **Download all** to save audio, cover images, and per-clip metadata.
+8. Click **Extract JSON** to save the current discovery result without downloading audio, images, or video.
 
 Files are saved as:
 
