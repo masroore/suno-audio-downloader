@@ -11,6 +11,7 @@ const Actions = {
   DISCOVER_PROGRESS: "discoverProgress",
   DOWNLOAD_PROGRESS: "downloadProgress",
 };
+const DEFAULT_CATALOG_BATCH_SIZE = 1000;
 
 const el = {
   status: document.getElementById("status"),
@@ -18,6 +19,7 @@ const el = {
   startInput: document.getElementById("start-input"),
   countInput: document.getElementById("count-input"),
   pageSizeInput: document.getElementById("page-size-input"),
+  catalogBatchSizeInput: document.getElementById("catalog-batch-size-input"),
   autoDiscoverInput: document.getElementById("auto-discover-input"),
   btnConnect: document.getElementById("btn-connect"),
   btnDiscover: document.getElementById("btn-discover"),
@@ -49,10 +51,14 @@ function getDiscoveryOptions() {
   const start = parseInt(el.startInput.value, 10);
   const count = parseInt(el.countInput.value, 10);
   const pageSize = parseInt(el.pageSizeInput.value, 10);
+  const catalogBatchSize = parseInt(el.catalogBatchSizeInput.value, 10);
   return {
     start: Number.isFinite(start) && start >= 0 ? start : 0,
     count: Number.isFinite(count) && count >= 0 ? count : 0,
     pageSize: Number.isFinite(pageSize) && pageSize >= 1 && pageSize <= 100 ? pageSize : 50,
+    catalogBatchSize: Number.isFinite(catalogBatchSize) && catalogBatchSize >= 1
+      ? catalogBatchSize
+      : DEFAULT_CATALOG_BATCH_SIZE,
     auto: el.autoDiscoverInput.checked,
   };
 }
@@ -63,6 +69,7 @@ async function persistDiscoveryOptions() {
   el.startInput.value = res.discoveryOptions.start;
   el.countInput.value = res.discoveryOptions.count;
   el.pageSizeInput.value = res.discoveryOptions.pageSize;
+  el.catalogBatchSizeInput.value = res.discoveryOptions.catalogBatchSize;
   el.autoDiscoverInput.checked = res.discoveryOptions.auto;
 }
 
@@ -160,7 +167,7 @@ function updateProgress(progress, type) {
   if (type === "discover") {
     if (progress.phase === "discovering") {
       if (progress.auto) {
-        const batchSize = progress.requestedCount || 1000;
+        const batchSize = progress.requestedCount || DEFAULT_CATALOG_BATCH_SIZE;
         const cumulative = progress.cumulativeCount ?? progress.count;
         setStatus("Auto discovering…", "busy");
         el.progressText.textContent = `Batch ${progress.batch} · ${progress.count} / ${batchSize}`;
@@ -267,10 +274,17 @@ async function refreshState() {
   connected = res.connected;
   clipCount = res.clipCount;
   el.downloadPath.value = (res.downloadPath || "SunoDownloads").replace(/[\\/]+/g, "");
-  const options = res.discoveryOptions || { start: 0, count: 0, pageSize: 50, auto: false };
+  const options = res.discoveryOptions || {
+    start: 0,
+    count: 0,
+    pageSize: 50,
+    catalogBatchSize: DEFAULT_CATALOG_BATCH_SIZE,
+    auto: false,
+  };
   el.startInput.value = options.start;
   el.countInput.value = options.count;
   el.pageSizeInput.value = options.pageSize;
+  el.catalogBatchSizeInput.value = options.catalogBatchSize;
   el.autoDiscoverInput.checked = options.auto;
   lastDiscovery = res.lastDiscovery;
   if (Array.isArray(res.clips)) {
@@ -341,7 +355,13 @@ async function persistDownloadPath() {
 el.downloadPath.addEventListener("change", persistDownloadPath);
 el.downloadPath.addEventListener("blur", persistDownloadPath);
 
-for (const input of [el.startInput, el.countInput, el.pageSizeInput, el.autoDiscoverInput]) {
+for (const input of [
+  el.startInput,
+  el.countInput,
+  el.pageSizeInput,
+  el.catalogBatchSizeInput,
+  el.autoDiscoverInput,
+]) {
   input.addEventListener("change", persistDiscoveryOptions);
   input.addEventListener("blur", persistDiscoveryOptions);
 }

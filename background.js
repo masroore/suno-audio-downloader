@@ -6,9 +6,10 @@ const DOWNLOAD_TIMEOUT_MS = 300000;
 const DEFAULT_START = 0;
 const DEFAULT_COUNT = 0;
 const DEFAULT_PAGE_SIZE = 50;
-const AUTO_DISCOVERY_BATCH_SIZE = 1000;
+const DEFAULT_CATALOG_BATCH_SIZE = 1000;
 const MIN_PAGE_SIZE = 1;
 const MAX_PAGE_SIZE = 100;
+const MIN_CATALOG_BATCH_SIZE = 1;
 const PAGE_SIZE_FALLBACKS = [50, 20, 10];
 // TODO: remove after production / once discover is stable
 const DEBUG = true;
@@ -120,6 +121,7 @@ function normalizeDiscoveryOptions(options = {}) {
   const startValue = Number(options.start);
   const countValue = Number(options.count);
   const pageSizeValue = Number(options.pageSize);
+  const catalogBatchSizeValue = Number(options.catalogBatchSize);
   const auto = options.auto === true;
   const start = Number.isInteger(startValue) && startValue >= 0
     ? startValue
@@ -132,7 +134,11 @@ function normalizeDiscoveryOptions(options = {}) {
     pageSizeValue <= MAX_PAGE_SIZE
     ? pageSizeValue
     : DEFAULT_PAGE_SIZE;
-  return { start, count, pageSize, auto };
+  const catalogBatchSize = Number.isInteger(catalogBatchSizeValue) &&
+    catalogBatchSizeValue >= MIN_CATALOG_BATCH_SIZE
+    ? catalogBatchSizeValue
+    : DEFAULT_CATALOG_BATCH_SIZE;
+  return { start, count, pageSize, catalogBatchSize, auto };
 }
 
 async function saveDiscoveryOptions(options) {
@@ -664,7 +670,7 @@ async function autoDiscoverClips(options = {}) {
         {
           ...normalized,
           start: nextStart,
-          count: AUTO_DISCOVERY_BATCH_SIZE,
+          count: normalized.catalogBatchSize,
           auto: true,
         },
         { autoContext, resetCancellation: false },
@@ -704,7 +710,7 @@ async function autoDiscoverClips(options = {}) {
 
       if (
         cancelRequested ||
-        result.count < AUTO_DISCOVERY_BATCH_SIZE ||
+        result.count < normalized.catalogBatchSize ||
         !result.hasMore
       ) {
         break;
@@ -716,7 +722,7 @@ async function autoDiscoverClips(options = {}) {
       page: state.discoverProgress.page || 0,
       count: lastSavedBatchCount,
       start: lastSavedBatchStart,
-      requestedCount: AUTO_DISCOVERY_BATCH_SIZE,
+      requestedCount: normalized.catalogBatchSize,
       requestedPageSize: normalized.pageSize,
       pageSize: state.discoverProgress.pageSize || normalized.pageSize,
       autoComplete: true,
@@ -736,7 +742,7 @@ async function autoDiscoverClips(options = {}) {
       page: state.discoverProgress.page || 0,
       count: lastSavedBatchCount,
       start: lastSavedBatchStart,
-      requestedCount: AUTO_DISCOVERY_BATCH_SIZE,
+      requestedCount: normalized.catalogBatchSize,
       requestedPageSize: normalized.pageSize,
       pageSize: state.discoverProgress.pageSize || normalized.pageSize,
       error: err.message,
