@@ -18,6 +18,7 @@ const el = {
   startInput: document.getElementById("start-input"),
   countInput: document.getElementById("count-input"),
   pageSizeInput: document.getElementById("page-size-input"),
+  autoDiscoverInput: document.getElementById("auto-discover-input"),
   btnConnect: document.getElementById("btn-connect"),
   btnDiscover: document.getElementById("btn-discover"),
   btnDownload: document.getElementById("btn-download"),
@@ -52,6 +53,7 @@ function getDiscoveryOptions() {
     start: Number.isFinite(start) && start >= 0 ? start : 0,
     count: Number.isFinite(count) && count >= 0 ? count : 0,
     pageSize: Number.isFinite(pageSize) && pageSize >= 1 && pageSize <= 100 ? pageSize : 50,
+    auto: el.autoDiscoverInput.checked,
   };
 }
 
@@ -61,6 +63,7 @@ async function persistDiscoveryOptions() {
   el.startInput.value = res.discoveryOptions.start;
   el.countInput.value = res.discoveryOptions.count;
   el.pageSizeInput.value = res.discoveryOptions.pageSize;
+  el.autoDiscoverInput.checked = res.discoveryOptions.auto;
 }
 
 function formatDuration(seconds) {
@@ -156,19 +159,40 @@ function updateProgress(progress, type) {
   el.progressPanel.hidden = false;
   if (type === "discover") {
     if (progress.phase === "discovering") {
-      setStatus("Discovering…", "busy");
-      el.progressText.textContent = `Fetching page ${progress.page}…`;
-      el.progressDetail.textContent = `${progress.count} clips found`;
-      el.progressBar.style.width = progress.totalEstimate
-        ? `${Math.min(100, (progress.count / progress.totalEstimate) * 100)}%`
-        : "30%";
+      if (progress.auto) {
+        const batchSize = progress.requestedCount || 1000;
+        const cumulative = progress.cumulativeCount ?? progress.count;
+        setStatus("Auto discovering…", "busy");
+        el.progressText.textContent = `Batch ${progress.batch} · ${progress.count} / ${batchSize}`;
+        el.progressDetail.textContent = `Offset ${progress.batchStart} · ${cumulative} clips saved`;
+        el.progressBar.style.width = `${Math.min(100, (progress.count / batchSize) * 100)}%`;
+      } else {
+        setStatus("Discovering…", "busy");
+        el.progressText.textContent = `Fetching page ${progress.page}…`;
+        el.progressDetail.textContent = `${progress.count} clips found`;
+        el.progressBar.style.width = progress.totalEstimate
+          ? `${Math.min(100, (progress.count / progress.totalEstimate) * 100)}%`
+          : "30%";
+      }
     } else if (progress.phase === "complete") {
-      setStatus(`Connected · ${progress.count} clips`, "ok");
-      el.progressText.textContent = "Discovery complete";
-      el.progressDetail.textContent = "";
-      el.progressBar.style.width = "100%";
+      const count = progress.cumulativeCount ?? progress.count;
+      if (progress.auto && !progress.autoComplete) {
+        setStatus("Auto discovering…", "busy");
+        el.progressText.textContent = `Batch ${progress.batch} fetched`;
+        el.progressDetail.textContent = `${count} clips saved cumulatively`;
+      } else {
+        setStatus(`Connected · ${count} clips`, "ok");
+        el.progressText.textContent = progress.auto ? "Auto discovery complete" : "Discovery complete";
+        el.progressDetail.textContent = progress.auto && progress.batchCount > 0
+          ? `Last batch: ${progress.batchStart}-${progress.batchStart + progress.batchCount - 1}`
+          : "";
+        el.progressBar.style.width = "100%";
+      }
     } else if (progress.phase === "cancelled") {
-      el.progressText.textContent = "Discovery cancelled";
+      el.progressText.textContent = progress.auto ? "Auto discovery cancelled" : "Discovery cancelled";
+      el.progressDetail.textContent = progress.auto
+        ? `${progress.cumulativeCount ?? progress.count} clips saved`
+        : "";
     } else if (progress.phase === "error") {
       setStatus(progress.error || "Discovery failed", "error");
       el.progressText.textContent = "Discovery failed";
@@ -243,15 +267,16 @@ async function refreshState() {
   connected = res.connected;
   clipCount = res.clipCount;
   el.downloadPath.value = (res.downloadPath || "SunoDownloads").replace(/[\\/]+/g, "");
-  const options = res.discoveryOptions || { start: 0, count: 0, pageSize: 50 };
+  const options = res.discoveryOptions || { start: 0, count: 0, pageSize: 50, auto: false };
   el.startInput.value = options.start;
   el.countInput.value = options.count;
   el.pageSizeInput.value = options.pageSize;
+  el.autoDiscoverInput.checked = options.auto;
   lastDiscovery = res.lastDiscovery;
   if (Array.isArray(res.clips)) {
     renderClips(res.clips, res.downloadProgress?.statuses);
   }
-  const busy = res.isDiscovering || res.isDownloading;
+  const busy = res.isDiscovering || res.isAutoDiscovering || res.isDownloading;
   if (busy) {
     setBusy(true);
     el.btnCancel.disabled = false;
@@ -269,7 +294,7 @@ async function refreshState() {
     const remaining = res.clipCount - res.completedClipIds.length;
     el.btnResume.textContent = `Resume (${remaining} left)`;
   }
-  if (connected && !res.isDiscovering && !res.isDownloading) {
+  if (connected && !res.isDiscovering && !res.isAutoDiscovering && !res.isDownloading) {
     setStatus(clipCount ? `Connected · ${clipCount} clips` : "Connected", "ok");
   } else if (!connected) {
     setStatus("Not connected", "idle");
@@ -316,7 +341,7 @@ async function persistDownloadPath() {
 el.downloadPath.addEventListener("change", persistDownloadPath);
 el.downloadPath.addEventListener("blur", persistDownloadPath);
 
-for (const input of [el.startInput, el.countInput, el.pageSizeInput]) {
+for (const input of [el.startInput, el.countInput, el.pageSizeInput, el.autoDiscoverInput]) {
   input.addEventListener("change", persistDiscoveryOptions);
   input.addEventListener("blur", persistDiscoveryOptions);
 }
@@ -427,7 +452,12 @@ el.btnResume.addEventListener("click", async () => {
 chrome.runtime.onMessage.addListener((message) => {
   if (message.action === Actions.DISCOVER_PROGRESS && message.progress) {
     updateProgress(message.progress, "discover");
-    if (message.progress.phase === "complete") {
+    const terminal = ["complete", "cancelled", "error"].includes(message.progress.phase);
+    if (terminal) {
+      setBusy(false);
+      el.btnCancel.disabled = true;
+    }
+    if (message.progress.phase === "complete" && (!message.progress.auto || message.progress.autoComplete)) {
       refreshState();
     }
   }

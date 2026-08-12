@@ -112,6 +112,24 @@ input[type="number"] {
   margin-top: 4px;
 }
 
+.auto-discovery-option {
+  grid-column: 1 / -1;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 0;
+  color: var(--text);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.checkbox-label input {
+  margin: 0;
+}
+
 .hint {
   margin: 8px 0 0;
   font-size: 11px;

@@ -6,6 +6,7 @@ const DOWNLOAD_TIMEOUT_MS = 300000;
 const DEFAULT_START = 0;
 const DEFAULT_COUNT = 0;
 const DEFAULT_PAGE_SIZE = 50;
+const AUTO_DISCOVERY_BATCH_SIZE = 1000;
 const MIN_PAGE_SIZE = 1;
 const MAX_PAGE_SIZE = 100;
 const PAGE_SIZE_FALLBACKS = [50, 20, 10];
@@ -41,6 +42,7 @@ let state = {
     start: DEFAULT_START,
     count: DEFAULT_COUNT,
     pageSize: DEFAULT_PAGE_SIZE,
+    auto: false,
   },
   lastDiscovery: null,
   discoverProgress: { phase: "idle", page: 0, count: 0 },
@@ -56,6 +58,7 @@ let state = {
 };
 
 let isDiscovering = false;
+let isAutoDiscovering = false;
 let isDownloading = false;
 let cancelRequested = false;
 let lastApiRequest = 0;
@@ -117,6 +120,7 @@ function normalizeDiscoveryOptions(options = {}) {
   const startValue = Number(options.start);
   const countValue = Number(options.count);
   const pageSizeValue = Number(options.pageSize);
+  const auto = options.auto === true;
   const start = Number.isInteger(startValue) && startValue >= 0
     ? startValue
     : DEFAULT_START;
@@ -128,7 +132,7 @@ function normalizeDiscoveryOptions(options = {}) {
     pageSizeValue <= MAX_PAGE_SIZE
     ? pageSizeValue
     : DEFAULT_PAGE_SIZE;
-  return { start, count, pageSize };
+  return { start, count, pageSize, auto };
 }
 
 async function saveDiscoveryOptions(options) {
@@ -402,20 +406,57 @@ async function fetchFeedPageWithFallback(cursor, activePageSize, requestedPageSi
   throw lastError;
 }
 
-async function discoverClips(options = {}) {
+function publishDiscoverProgress(progress, autoContext = null) {
+  const enriched = autoContext
+    ? {
+        ...progress,
+        auto: true,
+        batch: autoContext.batch,
+        batchStart: autoContext.start,
+        batchCount: progress.count,
+        cumulativeCount: autoContext.completed + progress.count,
+      }
+    : progress;
+  state.discoverProgress = enriched;
+  broadcast(Actions.DISCOVER_PROGRESS, { progress: state.discoverProgress });
+}
+
+async function discoverClips(options = {}, { autoContext = null, resetCancellation = true } = {}) {
   const { start, count, pageSize: requestedPageSize } = normalizeDiscoveryOptions(options);
-  if (isDiscovering) {
+  if (isDiscovering && !autoContext) {
     return { success: false, error: "Discovery already in progress" };
   }
   if (!state.token) {
-    return { success: false, error: "Not connected" };
+    const error = "Not connected";
+    publishDiscoverProgress({
+      phase: "error",
+      page: 0,
+      count: 0,
+      start,
+      requestedCount: count,
+      requestedPageSize,
+      pageSize: requestedPageSize,
+      error,
+    }, autoContext);
+    return { success: false, error };
   }
   if (!state.userId) {
-    return { success: false, error: "Missing user id — reconnect on suno.com." };
+    const error = "Missing user id — reconnect on suno.com.";
+    publishDiscoverProgress({
+      phase: "error",
+      page: 0,
+      count: 0,
+      start,
+      requestedCount: count,
+      requestedPageSize,
+      pageSize: requestedPageSize,
+      error,
+    }, autoContext);
+    return { success: false, error };
   }
 
   isDiscovering = true;
-  cancelRequested = false;
+  if (resetCancellation) cancelRequested = false;
   const clips = [];
   const seenIds = new Set();
   let page = 0;
@@ -434,7 +475,7 @@ async function discoverClips(options = {}) {
     filters,
   });
 
-  state.discoverProgress = {
+  publishDiscoverProgress({
     phase: "discovering",
     page: 0,
     count: 0,
@@ -442,8 +483,7 @@ async function discoverClips(options = {}) {
     requestedCount: count,
     requestedPageSize,
     pageSize: activePageSize,
-  };
-  broadcast(Actions.DISCOVER_PROGRESS, { progress: state.discoverProgress });
+  }, autoContext);
 
   try {
     while (hasMore && !cancelRequested) {
@@ -504,14 +544,13 @@ async function discoverClips(options = {}) {
         const normalized = normalizeClip(clip);
         clips.push(normalized);
       }
-      hasMore = hasMore &&
-        data.has_more &&
-        pageClips.length > 0 &&
-        !(count > 0 && clips.length >= count);
+      const reachedCount = count > 0 && clips.length >= count;
+      const feedHasMore = Boolean(data.has_more && pageClips.length > 0 && nextCursor);
+      hasMore = hasMore && feedHasMore && !reachedCount;
       cursor = nextCursor || null;
       if (!cursor) hasMore = false;
       page++;
-      state.discoverProgress = {
+      publishDiscoverProgress({
         phase: "discovering",
         page,
         count: clips.length,
@@ -521,8 +560,13 @@ async function discoverClips(options = {}) {
         requestedPageSize,
         pageSize: activePageSize,
         totalEstimate: null,
-      };
-      broadcast(Actions.DISCOVER_PROGRESS, { progress: state.discoverProgress });
+      }, autoContext);
+      if (reachedCount) {
+        // Manual discovery stops at count; auto mode needs the cursor signal
+        // to decide whether to request the next batch.
+        if (autoContext) hasMore = feedHasMore;
+        break;
+      }
     }
 
     state.clips = clips;
@@ -536,29 +580,36 @@ async function discoverClips(options = {}) {
       page_size: activePageSize,
       clips: clips.map(({ clipData }) => clipData),
     };
-    if (!cancelRequested && count > 0 && clips.length > 0) {
+    if (!autoContext && !cancelRequested && count > 0 && clips.length > 0) {
       await saveDiscoveryOptions({
         ...state.discoveryOptions,
         start: start + clips.length,
       });
     }
-    state.discoverProgress = {
-      phase: cancelRequested ? "cancelled" : "complete",
-      page,
-      count: clips.length,
-      skipped,
-      start,
-      requestedCount: count,
-      requestedPageSize,
-      pageSize: activePageSize,
-    };
-    broadcast(Actions.DISCOVER_PROGRESS, { progress: state.discoverProgress });
+    if (!autoContext) {
+      publishDiscoverProgress({
+        phase: cancelRequested ? "cancelled" : "complete",
+        page,
+        count: clips.length,
+        skipped,
+        start,
+        requestedCount: count,
+        requestedPageSize,
+        pageSize: activePageSize,
+      });
+    }
     debugLog("discover done", {
       phase: state.discoverProgress.phase,
       pages: page,
       count: clips.length,
     });
-    return { success: true, count: clips.length, clips: clipsForPopup(clips) };
+    return {
+      success: true,
+      cancelled: cancelRequested,
+      count: clips.length,
+      hasMore: !cancelRequested && hasMore,
+      clips: clipsForPopup(clips),
+    };
   } catch (err) {
     console.error("[suno-dl] discover failed", {
       page,
@@ -571,7 +622,7 @@ async function discoverClips(options = {}) {
     });
     // Also log to console to ensure visibility
     console.error("[suno-dl] DISCOVER ERROR:", err);
-    state.discoverProgress = {
+    publishDiscoverProgress({
       phase: "error",
       page,
       count: clips.length,
@@ -580,11 +631,124 @@ async function discoverClips(options = {}) {
       requestedPageSize,
       pageSize: activePageSize,
       error: err.message,
-    };
-    broadcast(Actions.DISCOVER_PROGRESS, { progress: state.discoverProgress });
+    }, autoContext);
     return { success: false, error: err.message };
   } finally {
     isDiscovering = false;
+  }
+}
+
+async function autoDiscoverClips(options = {}) {
+  if (isDiscovering || isAutoDiscovering) {
+    return { success: false, error: "Discovery already in progress" };
+  }
+
+  const normalized = normalizeDiscoveryOptions(options);
+  isAutoDiscovering = true;
+  cancelRequested = false;
+  let nextStart = normalized.start;
+  let cumulativeCount = 0;
+  let batch = 0;
+  let lastSavedBatchStart = nextStart;
+  let lastSavedBatchCount = 0;
+
+  try {
+    while (!cancelRequested) {
+      batch++;
+      const autoContext = {
+        batch,
+        start: nextStart,
+        completed: cumulativeCount,
+      };
+      const result = await discoverClips(
+        {
+          ...normalized,
+          start: nextStart,
+          count: AUTO_DISCOVERY_BATCH_SIZE,
+          auto: true,
+        },
+        { autoContext, resetCancellation: false },
+      );
+
+      if (!result.success) {
+        publishDiscoverProgress({
+          ...state.discoverProgress,
+          autoComplete: true,
+          count: lastSavedBatchCount,
+          start: lastSavedBatchStart,
+          error: result.error,
+          phase: "error",
+        }, {
+          batch,
+          start: lastSavedBatchStart,
+          completed: cumulativeCount - lastSavedBatchCount,
+        });
+        return result;
+      }
+      if (result.cancelled) break;
+
+      if (result.count === 0) break;
+
+      const basePath = sanitizeDownloadFolder(state.downloadPath);
+      await extractAggregateJson(basePath);
+
+      cumulativeCount += result.count;
+      lastSavedBatchStart = nextStart;
+      lastSavedBatchCount = result.count;
+      nextStart += result.count;
+      await saveDiscoveryOptions({
+        ...state.discoveryOptions,
+        start: nextStart,
+        auto: true,
+      });
+
+      if (
+        cancelRequested ||
+        result.count < AUTO_DISCOVERY_BATCH_SIZE ||
+        !result.hasMore
+      ) {
+        break;
+      }
+    }
+
+    publishDiscoverProgress({
+      phase: cancelRequested ? "cancelled" : "complete",
+      page: state.discoverProgress.page || 0,
+      count: lastSavedBatchCount,
+      start: lastSavedBatchStart,
+      requestedCount: AUTO_DISCOVERY_BATCH_SIZE,
+      requestedPageSize: normalized.pageSize,
+      pageSize: state.discoverProgress.pageSize || normalized.pageSize,
+      autoComplete: true,
+    }, {
+      batch,
+      start: lastSavedBatchStart,
+      completed: cumulativeCount - lastSavedBatchCount,
+    });
+    return {
+      success: true,
+      count: cumulativeCount,
+      cancelled: cancelRequested,
+    };
+  } catch (err) {
+    publishDiscoverProgress({
+      phase: "error",
+      page: state.discoverProgress.page || 0,
+      count: lastSavedBatchCount,
+      start: lastSavedBatchStart,
+      requestedCount: AUTO_DISCOVERY_BATCH_SIZE,
+      requestedPageSize: normalized.pageSize,
+      pageSize: state.discoverProgress.pageSize || normalized.pageSize,
+      error: err.message,
+      autoComplete: true,
+    }, {
+      batch,
+      start: lastSavedBatchStart,
+      completed: cumulativeCount - lastSavedBatchCount,
+    });
+    return { success: false, error: err.message };
+  } finally {
+    isAutoDiscovering = false;
   }
 }
 
@@ -893,6 +1057,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           discoverProgress: state.discoverProgress,
           downloadProgress: state.downloadProgress,
           isDiscovering,
+          isAutoDiscovering,
           isDownloading,
           completedClipIds: state.completedClipIds,
           discoveryOptions: state.discoveryOptions,
@@ -916,12 +1081,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         sendResponse({ success: true, discoveryOptions: state.discoveryOptions });
         break;
       case Actions.DISCOVER:
-        if (isDiscovering) {
+        if (isDiscovering || isAutoDiscovering) {
           sendResponse({ success: false, error: "Discovery already in progress" });
           break;
         }
         // Fire and forget — popup polls via GET_STATE / DISCOVER_PROGRESS broadcasts
-        discoverClips(message.options || state.discoveryOptions).catch((err) => {
+        const discoveryOptions = normalizeDiscoveryOptions(message.options || state.discoveryOptions);
+        const discoveryRunner = discoveryOptions.auto ? autoDiscoverClips : discoverClips;
+        discoveryRunner(discoveryOptions).catch((err) => {
           console.error("[suno-dl] background discover error", err);
         });
         sendResponse({ success: true, started: true });
