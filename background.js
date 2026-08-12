@@ -474,13 +474,21 @@ async function discoverClips(options = {}) {
       }
       activePageSize = pageResult.pageSize;
       const data = pageResult.data;
+      if (usedOffset) {
+        cursor = data?.clip_id || data?.next_cursor || null;
+        offsetRequestPending = false;
+        if (!cursor) hasMore = false;
+        debugLog("discover offset cursor", { cursor });
+        continue;
+      }
       const pageClips = data?.clips || [];
+      const nextCursor = data?.next_cursor;
       debugLog("discover page result", {
         page,
         clipCount: pageClips.length,
         pageSize: activePageSize,
         has_more: data?.has_more,
-        next_cursor: data?.next_cursor ?? null,
+        next_cursor: nextCursor ?? null,
         sampleKeys: pageClips[0] ? Object.keys(pageClips[0]) : [],
         rawKeys: data && typeof data === "object" ? Object.keys(data) : [],
       });
@@ -500,7 +508,7 @@ async function discoverClips(options = {}) {
         data.has_more &&
         pageClips.length > 0 &&
         !(count > 0 && clips.length >= count);
-      cursor = data.next_cursor || null;
+      cursor = nextCursor || null;
       if (!cursor) hasMore = false;
       page++;
       state.discoverProgress = {
