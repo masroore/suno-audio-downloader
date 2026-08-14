@@ -564,7 +564,6 @@ async function discoverClips(options = {}, { autoContext = null, resetCancellati
         requestedCount: count,
         requestedPageSize,
         pageSize: activePageSize,
-        totalEstimate: null,
       }, autoContext);
       if (reachedCount) {
         // Manual discovery stops at count; auto mode needs the cursor signal

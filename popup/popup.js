@@ -176,10 +176,14 @@ function updateProgress(progress, type) {
       } else {
         setStatus("Discovering…", "busy");
         el.progressText.textContent = `Fetching page ${progress.page}…`;
-        el.progressDetail.textContent = `${progress.count} clips found`;
-        el.progressBar.style.width = progress.totalEstimate
-          ? `${Math.min(100, (progress.count / progress.totalEstimate) * 100)}%`
-          : "30%";
+        if (progress.requestedCount > 0) {
+          el.progressDetail.textContent = `${progress.count} / ${progress.requestedCount} clips`;
+          el.progressBar.style.width = `${Math.min(100, (progress.count / progress.requestedCount) * 100)}%`;
+        } else {
+          // Full-library fetch with no known total — leave the bar indeterminate.
+          el.progressDetail.textContent = `${progress.count} clips found`;
+          el.progressBar.style.width = "30%";
+        }
       }
     } else if (progress.phase === "complete") {
       const count = progress.cumulativeCount ?? progress.count;
