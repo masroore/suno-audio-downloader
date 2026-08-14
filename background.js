@@ -695,7 +695,7 @@ async function autoDiscoverClips(options = {}) {
       if (result.count === 0) break;
 
       const basePath = sanitizeDownloadFolder(state.downloadPath);
-      await extractAggregateJson(basePath, { sanitizeCatalog: true });
+      await extractAggregateJson(basePath);
 
       cumulativeCount += result.count;
       lastSavedBatchStart = nextStart;
@@ -865,7 +865,7 @@ function sanitizeCatalogPayload(value) {
   );
 }
 
-async function extractAggregateJson(basePath, options = {}) {
+async function extractAggregateJson(basePath) {
   if (!state.lastDiscovery) {
     throw new Error("No discovery results — run Discover first");
   }
@@ -874,9 +874,7 @@ async function extractAggregateJson(basePath, options = {}) {
     clips: state.clips.map(({ clipData }) => clipData),
     actual_count: state.clips.length,
   };
-  const persistedDiscovery = options.sanitizeCatalog
-    ? sanitizeCatalogPayload(discovery)
-    : discovery;
+  const persistedDiscovery = sanitizeCatalogPayload(discovery);
   const json = JSON.stringify(persistedDiscovery, null, 2);
   const dataUrl = "data:application/json;charset=utf-8," + encodeURIComponent(json);
   return downloadFromUrl(

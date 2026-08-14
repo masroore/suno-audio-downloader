@@ -10,7 +10,7 @@ A Chrome / Firefox (Manifest V3) extension that discovers the audio in your Suno
 - **Discover** — walks your Suno feed (`POST /feed/v3`) with a zero-based start offset, count, and configurable API page size.
 - **Build library catalog** — discovers the full library in configurable batches (default: 1,000 clips) and saves each batch as an aggregate JSON file.
 - **Bulk download** — for each clip, saves audio, large cover image, and a metadata sidecar into `Downloads/<subfolder>/` with a retry/backoff queue (4 concurrent clips, up to 3 retries per file).
-- **Extract JSON** — saves one aggregate JSON file containing the full raw feed metadata for the current discovery result, without downloading media.
+- **Extract JSON** — saves one aggregate JSON file containing the feed metadata for the current discovery result (with `model_badges`, `action_config`, and `ownership` omitted recursively), without downloading media.
 - **Progress + cancel** — live progress bar for both discovery and downloads, cancellable at any time.
 - **Page size fallback** — starts with the selected API page size and falls back to smaller sizes when the API rejects the requested limit.
 
@@ -58,7 +58,7 @@ Downloads/<subfolder>/Suno metadata [<start>-<end>].json
 
 (Image extension follows `image_large_url`, usually `.jpeg`.)
 
-The aggregate JSON includes `source`, `fetched_at`, requested and actual counts, requested and effective page sizes, and a `clips` array containing each raw clip object returned by the feed. During **Build library catalog**, the `model_badges`, `action_config`, and `ownership` fields are omitted recursively from each persisted catalog JSON file. Empty or out-of-range results are saved as `Suno metadata [<start>-empty].json`.
+The aggregate JSON includes `source`, `fetched_at`, requested and actual counts, requested and effective page sizes, and a `clips` array containing each raw clip object returned by the feed. The `model_badges`, `action_config`, and `ownership` fields are omitted recursively from every persisted aggregate JSON file (both **Build library catalog** batches and the **Extract JSON** output). Empty or out-of-range results are saved as `Suno metadata [<start>-empty].json`.
 
 ## How it works
 
