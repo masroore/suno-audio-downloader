@@ -9,7 +9,7 @@ A Chrome / Firefox (Manifest V3) extension that discovers the audio in your Suno
 - **Connect** — pulls your Suno session token and user id from the active `suno.com` tab (via Clerk) and stores them locally.
 - **Discover** — walks your Suno feed (`POST /feed/v3`) with a zero-based start offset, count, and configurable API page size.
 - **Build library catalog** — discovers the full library in configurable batches (default: 1,000 clips) and saves each batch as an aggregate JSON file.
-- **Bulk download** — for each clip, saves audio, large cover image, and a metadata sidecar into `Downloads/<subfolder>/` with a retry/backoff queue (2 concurrent clips, up to 3 retries per file).
+- **Bulk download** — for each clip, saves audio, large cover image, and a metadata sidecar into `Downloads/<subfolder>/` with a retry/backoff queue (4 concurrent clips, up to 3 retries per file).
 - **Extract JSON** — saves one aggregate JSON file containing the full raw feed metadata for the current discovery result, without downloading media.
 - **Progress + cancel** — live progress bar for both discovery and downloads, cancellable at any time.
 - **Page size fallback** — starts with the selected API page size and falls back to smaller sizes when the API rejects the requested limit.
@@ -58,13 +58,13 @@ Downloads/<subfolder>/Suno metadata [<start>-<end>].json
 
 (Image extension follows `image_large_url`, usually `.jpeg`.)
 
-The aggregate JSON includes `source`, `fetched_at`, requested and actual counts, requested and effective page sizes, and a `clips` array containing each complete raw clip object returned by the feed. Empty or out-of-range results are saved as `Suno metadata [<start>-empty].json`.
+The aggregate JSON includes `source`, `fetched_at`, requested and actual counts, requested and effective page sizes, and a `clips` array containing each raw clip object returned by the feed. During **Build library catalog**, the `model_badges`, `action_config`, and `ownership` fields are omitted recursively from each persisted catalog JSON file. Empty or out-of-range results are saved as `Suno metadata [<start>-empty].json`.
 
 ## How it works
 
 - **Auth** — the extension injects a script into your suno.com tab and reads `window.Clerk.session.getToken()` plus `window.Clerk.user.id`, then uses the bearer token for API requests. Token and user id are kept in `chrome.storage.local` and cleared automatically when the token expires (HTTP 401).
-- **Discovery** — uses `https://studio-api-prod.suno.com/api/feed/v3/offset` to seek directly to a non-zero start offset, then pages through `https://studio-api-prod.suno.com/api/feed/v3` with cursor pagination (500 ms rate limit between requests). The requested page size is sent as `limit` for cursor requests; validation errors fall back through `50`, `20`, and `10`. Results are deduplicated by clip id, filtered by the zero-based start/count range, and scoped to your user id. Clips remain eligible for JSON extraction even when media URLs are missing.
-- **Downloads** — each clip’s audio, `image_large_url`, and full feed JSON snippet are downloaded via the `chrome.downloads` API into the chosen subfolder (no save-as prompt), with 2 concurrent workers, exponential-backoff retries, a 5-minute per-file timeout, and `uniquify` conflict handling. Audio failure fails the clip; image/metadata failures are reported but do not block the audio.
+- **Discovery** — uses `https://studio-api-prod.suno.com/api/feed/v3/offset` to seek directly to a non-zero start offset, then pages through `https://studio-api-prod.suno.com/api/feed/v3` with cursor pagination and a randomized 250–1,999 ms delay between API requests. The requested page size is sent as `limit` for cursor requests; validation errors fall back through `50`, `20`, and `10`. Results are deduplicated by clip id, filtered by the zero-based start/count range, and scoped to your user id. Clips remain eligible for JSON extraction even when media URLs are missing.
+- **Downloads** — each clip’s audio, `image_large_url`, and full feed JSON snippet are downloaded via the `chrome.downloads` API into the chosen subfolder (no save-as prompt), with 4 concurrent workers, exponential-backoff retries, a 5-minute per-file timeout, and `uniquify` conflict handling. CDN-backed asset downloads start immediately; audio failure fails the clip; image/metadata failures are reported but do not block the audio.
 - **Format** — the audio extension (`.mp3` / `.m4a`) is inferred from the clip's `audio_url`, with a `cdn1.suno.ai/<id>.mp3` fallback.
 
 ## Notes & limitations

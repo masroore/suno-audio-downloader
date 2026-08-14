@@ -26,9 +26,10 @@ manifest.json          — extension manifest (permissions, version)
 ## Shared constants in background.js (lines 1–8)
 
 ```js
-const API_DELAY_MS = 500;
+const API_DELAY_MIN_MS = 250;
+const API_DELAY_MAX_MS = 1999;
 const MAX_RETRIES = 3;
-const CONCURRENT_DOWNLOADS = 2;
+const CONCURRENT_DOWNLOADS = 4;
 const DOWNLOAD_TIMEOUT_MS = 300000;
 const FEED_PAGE_LIMIT = 20;
 const DEBUG = true;   // ← must be false in production

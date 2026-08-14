@@ -1,7 +1,8 @@
 const API_BASE = "https://studio-api-prod.suno.com/api";
-const API_DELAY_MS = 500;
+const API_DELAY_MIN_MS = 250;
+const API_DELAY_MAX_MS = 1999;
 const MAX_RETRIES = 3;
-const CONCURRENT_DOWNLOADS = 2;
+const CONCURRENT_DOWNLOADS = 4;
 const DOWNLOAD_TIMEOUT_MS = 300000;
 const DEFAULT_START = 0;
 const DEFAULT_COUNT = 0;
@@ -62,8 +63,6 @@ let isDiscovering = false;
 let isAutoDiscovering = false;
 let isDownloading = false;
 let cancelRequested = false;
-let lastApiRequest = 0;
-
 async function loadState() {
   const stored = await chrome.storage.local.get([
     "token",
@@ -154,12 +153,12 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function getRandomDelayMs(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
 async function apiRateLimit() {
-  const elapsed = Date.now() - lastApiRequest;
-  if (elapsed < API_DELAY_MS) {
-    await sleep(API_DELAY_MS - elapsed);
-  }
-  lastApiRequest = Date.now();
+  await sleep(getRandomDelayMs(API_DELAY_MIN_MS, API_DELAY_MAX_MS));
 }
 
 async function apiFetch(endpoint, options = {}, attempt = 0) {
@@ -696,7 +695,7 @@ async function autoDiscoverClips(options = {}) {
       if (result.count === 0) break;
 
       const basePath = sanitizeDownloadFolder(state.downloadPath);
-      await extractAggregateJson(basePath);
+      await extractAggregateJson(basePath, { sanitizeCatalog: true });
 
       cumulativeCount += result.count;
       lastSavedBatchStart = nextStart;
@@ -845,7 +844,28 @@ async function downloadJsonMetadata(clip, basePath) {
   return downloadFromUrl(dataUrl, getMetadataFilename(clip, basePath));
 }
 
-async function extractAggregateJson(basePath) {
+const CATALOG_OMITTED_KEYS = new Set([
+  "model_badges",
+  "action_config",
+  "ownership",
+]);
+
+function sanitizeCatalogPayload(value) {
+  if (Array.isArray(value)) {
+    return value.map(sanitizeCatalogPayload);
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => !CATALOG_OMITTED_KEYS.has(key))
+      .map(([key, nestedValue]) => [key, sanitizeCatalogPayload(nestedValue)]),
+  );
+}
+
+async function extractAggregateJson(basePath, options = {}) {
   if (!state.lastDiscovery) {
     throw new Error("No discovery results — run Discover first");
   }
@@ -854,9 +874,15 @@ async function extractAggregateJson(basePath) {
     clips: state.clips.map(({ clipData }) => clipData),
     actual_count: state.clips.length,
   };
-  const json = JSON.stringify(discovery, null, 2);
+  const persistedDiscovery = options.sanitizeCatalog
+    ? sanitizeCatalogPayload(discovery)
+    : discovery;
+  const json = JSON.stringify(persistedDiscovery, null, 2);
   const dataUrl = "data:application/json;charset=utf-8," + encodeURIComponent(json);
-  return downloadFromUrl(dataUrl, getAggregateMetadataFilename(discovery, basePath));
+  return downloadFromUrl(
+    dataUrl,
+    getAggregateMetadataFilename(persistedDiscovery, basePath),
+  );
 }
 
 async function downloadLyrics(clip, basePath) {
@@ -960,7 +986,6 @@ async function runDownloadQueue(clips, basePath) {
       }
       state.downloadProgress.current = completed;
       broadcast(Actions.DOWNLOAD_PROGRESS, { progress: state.downloadProgress });
-      await sleep(200);
     }
   };
 
